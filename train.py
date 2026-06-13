@@ -1,4 +1,5 @@
 import argparse
+import inspect
 import json
 import os
 
@@ -75,6 +76,40 @@ def save_config(args: argparse.Namespace, run_dir: str) -> None:
         json.dump(vars(args), f, ensure_ascii=False, indent=2)
 
 
+def build_grpo_config(args: argparse.Namespace) -> GRPOConfig:
+    config_kwargs = {
+        "output_dir": args.checkpoint_dir,
+        "learning_rate": args.learning_rate,
+        "logging_steps": args.logging_steps,
+        "num_generations": args.num_generations,
+        "num_train_epochs": args.num_train_epochs,
+        "save_steps": 50,
+        "max_prompt_length": args.max_prompt_length,
+        "max_completion_length": args.max_completion_length,
+        "per_device_train_batch_size": args.per_device_batch_size,
+        "gradient_accumulation_steps": args.grad_accum_steps,
+        "kl_coef": args.kl_coef,
+        "gradient_checkpointing": True,
+        "bf16": args.bf16,
+        "optim": args.optim,
+        "report_to": "none",
+    }
+
+    supported_params = set(inspect.signature(GRPOConfig.__init__).parameters)
+    if "kl_coef" not in supported_params and "beta" in supported_params:
+        config_kwargs["beta"] = config_kwargs.pop("kl_coef")
+
+    filtered_kwargs = {
+        key: value
+        for key, value in config_kwargs.items()
+        if key in supported_params
+    }
+    dropped_keys = sorted(set(config_kwargs) - set(filtered_kwargs))
+    if dropped_keys:
+        print(f"   GRPOConfig does not support {dropped_keys}; skipped for installed TRL version.")
+    return GRPOConfig(**filtered_kwargs)
+
+
 def main():
     args = parse_args()
     run_name = args.run_name or f"grpo_qwen25_1_5b_lora{args.lora_rank}_g{args.num_generations}"
@@ -125,23 +160,7 @@ def main():
     dataset = dataset.map(preprocess_dataset)
 
     print("5. Building GRPO config...")
-    training_args = GRPOConfig(
-        output_dir=args.checkpoint_dir,
-        learning_rate=args.learning_rate,
-        logging_steps=args.logging_steps,
-        num_generations=args.num_generations,
-        num_train_epochs=args.num_train_epochs,
-        save_steps=50,
-        max_prompt_length=args.max_prompt_length,
-        max_completion_length=args.max_completion_length,
-        per_device_train_batch_size=args.per_device_batch_size,
-        gradient_accumulation_steps=args.grad_accum_steps,
-        kl_coef=args.kl_coef,
-        gradient_checkpointing=True,
-        bf16=args.bf16,
-        optim=args.optim,
-        report_to="none",
-    )
+    training_args = build_grpo_config(args)
 
     print("6. Starting GRPO training...")
     trainer = GRPOTrainer(
