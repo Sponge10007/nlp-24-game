@@ -54,9 +54,9 @@ python data/prepare_data.py
 默认生成：
 
 ```text
-data/train.jsonl                  # nlile/24-game 中 solvable=True 的训练集
-data/unsolvable_test.jsonl         # nlile/24-game 中 solvable=False 的不可解 holdout
-data/test_all_nonoverlap.jsonl     # test-time-compute/game-of-24 非训练重叠全集
+data/train.jsonl                  # nlile/24-game 中 的训练集减去所有test的部分
+data/unsolvable_test.jsonl         # 枚举出并验证的不可解的数据集
+data/test_all_nonoverlap.jsonl     # 硬 split 和最低 solved-rate 的并集
 data/test_hard_900_1000.jsonl      # Tree of Thoughts 论文 hard split 去重后样本
 data/test_low_solved_rate.jsonl    # solved_rate 最低的一批样本
 data/test.jsonl                    # hard split 的兼容别名

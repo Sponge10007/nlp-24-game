@@ -1,0 +1,49 @@
+{
+  "train": {
+    "path": "data/train.jsonl",
+    "count": 1162,
+    "solvable": true,
+    "source": "nlile/24-game",
+    "nlile_raw_rows": 1362,
+    "nlile_raw_solvable": 1362,
+    "nlile_raw_unsolvable": 0,
+    "withheld_for_test": 200
+  },
+  "unsolvable_holdout": {
+    "path": "data/unsolvable_test.jsonl",
+    "count": 100,
+    "solvable": false,
+    "source": "local_enum_1_13_unsolvable",
+    "enumerated_total": 458,
+    "exported": 100,
+    "seed": 20240613
+  },
+  "tot_all_nonoverlap": {
+    "path": "data/test_all_nonoverlap.jsonl",
+    "count": 200,
+    "description": "unique union of hard split and lowest solved-rate ToT cases"
+  },
+  "tot_paper_hard_900_1000": {
+    "path": "data/test_hard_900_1000.jsonl",
+    "count": 100,
+    "alias": "data/test.jsonl",
+    "start_index": 900,
+    "end_index_exclusive": 1000
+  },
+  "tot_low_solved_rate": {
+    "path": "data/test_low_solved_rate.jsonl",
+    "count": 100,
+    "requested": 100
+  },
+  "tot_stats": {
+    "tot_raw_rows": 1362,
+    "tot_valid_rows": 1362,
+    "hard_low_overlap": 0,
+    "selected_test_key_count": 200
+  },
+  "countdown_ood": {
+    "path": "data/countdown_ood.jsonl",
+    "count": 200,
+    "enabled": true
+  }
+}
