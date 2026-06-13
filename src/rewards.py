@@ -1,130 +1,192 @@
-import re
-import math
 import os
+import re
+from collections import Counter, deque
 from datetime import datetime
-from collections import deque
+from typing import Any
+
+from src.game24 import (
+    CORRECT,
+    FABRICATED_UNSOLVABLE,
+    FALSE_UNSOLVABLE_CLAIM,
+    MISSING_ANSWER,
+    UNSOLVABLE_CLAIM,
+    completion_to_text,
+    extract_answer,
+    has_r1_format,
+    judge_answer,
+)
+
 
 _log_step = 0
 _history_correct = deque(maxlen=100)
 _history_total = deque(maxlen=100)
+_csv_buffer: list[str] = []
+_log_buffer: list[str] = []
+_metrics_initialized = False
 
-# ================= 新增：日志缓冲池 =================
-_csv_buffer = []
-_log_buffer = []
+METRICS_FILE = os.environ.get("TRAIN_METRICS_FILE", "training_metrics.csv")
+TRAIN_LOG_FILE = os.environ.get("TRAIN_LOG_FILE", "train_log.txt")
+METRICS_COLUMNS = [
+    "step",
+    "batch_accuracy",
+    "smoothed_accuracy",
+    "mean_correctness_reward",
+    "format_rate",
+    "correct_count",
+    "unsolvable_honest_count",
+    "false_unsolvable_claim_count",
+    "missing_answer_count",
+    "number_mismatch_count",
+    "illegal_character_count",
+    "syntax_error_count",
+    "division_by_zero_count",
+    "wrong_value_count",
+    "fabricated_unsolvable_count",
+]
 
-METRICS_FILE = "training_metrics.csv"
-if not os.path.exists(METRICS_FILE):
-    with open(METRICS_FILE, "w", encoding="utf-8") as f:
-        # 写入表头
-        f.write("step,batch_accuracy,smoothed_accuracy\n")
-# =========================================================
 
-def extract_answer(completion: str) -> str:
-    match = re.search(r"<answer>(.*?)</answer>", completion, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    return ""
+def _ensure_parent(path: str) -> None:
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+
+def init_metric_files(reset: bool = False) -> None:
+    global _metrics_initialized
+    _ensure_parent(METRICS_FILE)
+    _ensure_parent(TRAIN_LOG_FILE)
+    if reset or not os.path.exists(METRICS_FILE):
+        with open(METRICS_FILE, "w", encoding="utf-8") as f:
+            f.write(",".join(METRICS_COLUMNS) + "\n")
+    _metrics_initialized = True
+
+
+def flush_reward_logs() -> None:
+    global _csv_buffer, _log_buffer
+    if _csv_buffer:
+        _ensure_parent(METRICS_FILE)
+        with open(METRICS_FILE, "a", encoding="utf-8") as f:
+            f.writelines(_csv_buffer)
+        _csv_buffer.clear()
+    if _log_buffer:
+        _ensure_parent(TRAIN_LOG_FILE)
+        with open(TRAIN_LOG_FILE, "a", encoding="utf-8") as f:
+            f.writelines(_log_buffer)
+        _log_buffer.clear()
+
+
+def configure_reward_logging(metrics_file: str, train_log_file: str, reset: bool = True) -> None:
+    global METRICS_FILE, TRAIN_LOG_FILE
+    METRICS_FILE = metrics_file
+    TRAIN_LOG_FILE = train_log_file
+    init_metric_files(reset=reset)
+
+
+def _as_list(value: Any, length: int, default: Any) -> list[Any]:
+    if value is None:
+        return [default for _ in range(length)]
+    if isinstance(value, list):
+        return value
+    return [value for _ in range(length)]
+
 
 def format_reward(completions, **kwargs) -> list[float]:
     rewards = []
     for comp in completions:
-        if "<think>" in comp and "</think>" in comp and "<answer>" in comp and "</answer>" in comp:
-            rewards.append(0.5) 
-        else:
-            rewards.append(-1.0) 
+        rewards.append(0.5 if has_r1_format(comp) else -1.0)
     return rewards
 
-def correctness_reward(completions, target_nums, solvable, **kwargs) -> list[float]:
+
+def correctness_reward(completions, target_nums, solvable=None, target_value=None, **kwargs) -> list[float]:
     global _log_step, _history_correct, _history_total
-    global _csv_buffer, _log_buffer
-    
+
+    if not _metrics_initialized:
+        init_metric_files(reset=False)
+
     _log_step += 1
-    
-    rewards = []
-    batch_correct = 0  
-    batch_total = len(completions)
-    
-    for comp, nums, is_solvable in zip(completions, target_nums, solvable):
+
+    total = len(completions)
+    solvable_values = _as_list(solvable, total, True)
+    target_values = _as_list(target_value, total, 24)
+
+    rewards: list[float] = []
+    judgments = []
+    code_counts: Counter[str] = Counter()
+    format_count = 0
+
+    for comp, nums, is_solvable, tgt in zip(completions, target_nums, solvable_values, target_values):
         ans = extract_answer(comp)
-        
-        if not is_solvable:
-            if ans.strip().upper() == "UNSOLVABLE":
-                rewards.append(2.0)
-                batch_correct += 1
-            else:
-                rewards.append(-1.5)
-            continue
-            
-        if not ans:
-            rewards.append(-0.5)
-            continue
+        judgment = judge_answer(ans, nums, target_value=tgt, solvable=bool(is_solvable))
+        judgments.append(judgment)
+        code_counts[judgment.code] += 1
+        if has_r1_format(comp):
+            format_count += 1
 
-        try:
-            used_nums = [int(n) for n in re.findall(r'\d+', ans)]
-            if sorted(used_nums) != sorted(nums):
-                rewards.append(-0.5)
-                continue
-        except Exception:
-             rewards.append(-0.5)
-             continue
+        if judgment.ok and judgment.code in {CORRECT, UNSOLVABLE_CLAIM}:
+            rewards.append(2.0)
+        elif judgment.code == FABRICATED_UNSOLVABLE:
+            rewards.append(-1.5)
+        elif judgment.code == MISSING_ANSWER:
+            rewards.append(-0.5)
+        elif not judgment.ok:
+            rewards.append(-0.5 if judgment.value is None else 0.0)
+        else:
+            rewards.append(0.0)
 
-        try:
-            clean_exp = re.sub(r'[^0-9+\-*/(). ]', '', ans)
-            if clean_exp.strip() != ans.strip():
-                rewards.append(-0.5)
-                continue
-            
-            result = eval(clean_exp)
-            if math.isclose(result, 24.0, abs_tol=1e-6):
-                rewards.append(2.0)
-                batch_correct += 1 
-            else:
-                rewards.append(0.0) 
-        except ZeroDivisionError:
-            rewards.append(-0.5)
-        except Exception:
-            rewards.append(-0.5)
-            
-    # --- 统计更新 ---
-    _history_correct.append(batch_correct)
-    _history_total.append(batch_total)
-    
+    correct_count = code_counts[CORRECT] + code_counts[UNSOLVABLE_CLAIM]
+    _history_correct.append(correct_count)
+    _history_total.append(total)
+
     recent_correct = sum(_history_correct)
     recent_total = sum(_history_total)
-    smoothed_accuracy = (recent_correct / recent_total) * 100 if recent_total > 0 else 0
-    batch_accuracy = (batch_correct / batch_total) * 100
+    smoothed_accuracy = (recent_correct / recent_total) * 100 if recent_total else 0.0
+    batch_accuracy = (correct_count / total) * 100 if total else 0.0
+    format_rate = (format_count / total) * 100 if total else 0.0
+    mean_reward = sum(rewards) / len(rewards) if rewards else 0.0
 
-    print(f"\n[Step {_log_step}] 局部正确率: {batch_accuracy:5.1f}% | 📈 总体趋势(近100次): {smoothed_accuracy:5.1f}% ({recent_correct}/{recent_total})")
+    print(
+        f"\n[Step {_log_step}] acc={batch_accuracy:5.1f}% | "
+        f"trend100={smoothed_accuracy:5.1f}% | reward={mean_reward:5.2f} | format={format_rate:5.1f}%"
+    )
 
-    # ================= 【已修改】缓冲写入逻辑 =================
-    
-    # 1. 存入 CSV 缓存
-    _csv_buffer.append(f"{_log_step},{batch_accuracy:.2f},{smoothed_accuracy:.2f}\n")
-    
-    # 2. 存入 Log 缓存
+    row = {
+        "step": _log_step,
+        "batch_accuracy": f"{batch_accuracy:.2f}",
+        "smoothed_accuracy": f"{smoothed_accuracy:.2f}",
+        "mean_correctness_reward": f"{mean_reward:.4f}",
+        "format_rate": f"{format_rate:.2f}",
+        "correct_count": code_counts[CORRECT],
+        "unsolvable_honest_count": code_counts[UNSOLVABLE_CLAIM],
+        "false_unsolvable_claim_count": code_counts[FALSE_UNSOLVABLE_CLAIM],
+        "missing_answer_count": code_counts[MISSING_ANSWER],
+        "number_mismatch_count": code_counts["number_mismatch"],
+        "illegal_character_count": code_counts["illegal_character"],
+        "syntax_error_count": code_counts["syntax_error"],
+        "division_by_zero_count": code_counts["division_by_zero"],
+        "wrong_value_count": code_counts["wrong_value"],
+        "fabricated_unsolvable_count": code_counts[FABRICATED_UNSOLVABLE],
+    }
+    _csv_buffer.append(",".join(str(row[col]) for col in METRICS_COLUMNS) + "\n")
+
     time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log_content = f"\n{'='*20} Step {_log_step} [{time_str}] | 局部: {batch_accuracy:.1f}% | 总体趋势: {smoothed_accuracy:.1f}% {'='*20}\n"
-    for i, (comp, nums, r) in enumerate(zip(completions, target_nums, rewards)):
-        log_content += f"\n--- [样本 {i+1}] 题目: {nums} | 本次得分 (Reward): {r} ---\n"
-        compact_comp = re.sub(r'\n\s*\n', '\n', comp).strip()
-        log_content += f"{compact_comp}\n"
+    log_content = (
+        f"\n{'=' * 20} Step {_log_step} [{time_str}] | "
+        f"acc={batch_accuracy:.1f}% | trend100={smoothed_accuracy:.1f}% | "
+        f"reward={mean_reward:.3f} {'=' * 20}\n"
+    )
+    for i, (comp, nums, tgt, reward, judgment) in enumerate(zip(completions, target_nums, target_values, rewards, judgments)):
+        compact_comp = re.sub(r"\n\s*\n", "\n", completion_to_text(comp)).strip()
+        log_content += (
+            f"\n--- [Sample {i + 1}] nums={nums} target={tgt} "
+            f"reward={reward} code={judgment.code} value={judgment.value} ---\n"
+            f"{compact_comp}\n"
+        )
     _log_buffer.append(log_content)
 
-    # 3. 攒够 10 条后，一次性写入并清空缓冲
     if len(_csv_buffer) >= 10:
         try:
-            with open(METRICS_FILE, "a", encoding="utf-8") as f:
-                f.writelines(_csv_buffer)
-            _csv_buffer.clear()
-        except Exception as e:
-            print(f"⚠️ 写入 CSV 失败: {e}")
+            flush_reward_logs()
+        except Exception as exc:
+            print(f"Warning: failed to write reward logs: {exc}")
 
-        try:
-            with open("train_log.txt", "a", encoding="utf-8") as f:
-                f.writelines(_log_buffer)
-            _log_buffer.clear()
-        except Exception as e:
-            pass
-    # ============================================================
-        
     return rewards

@@ -1,85 +1,167 @@
-# 🎲 Qwen-24Game-GRPO: 基于强化学习的 24 点推导大模型微调
+# Qwen-24Game-GRPO: 基于强化学习的 24 点推理模型
 
-本项目旨在极限低显存（6GB VRAM）环境下，利用 **GRPO (Group Relative Policy Optimization)** 强化学习算法，对 `Qwen2.5-1.5B-Instruct` 进行可验证奖励（RLVR）微调，使其能够通过 `<think>...</think>` 树状推导过程，完美解决 24 点游戏。
-
-注意这里显存配置预设很低，如果觉得结果不理想，可以自行修改相关内容
-高显存提升效果建议:
-1、修改 NUM_GENERATIONS,增大
-2、修改 MAX_COMPLETION_LENGTH：从 384 提升至 1024 或 2048
-3、关闭 4-bit 量化，使用原生 bfloat16：
-修改方法： 在 train.py 中删掉（或注释掉） BitsAndBytesConfig 相关的代码。直接用 torch.bfloat16 加载模型。
-4、提升 LORA_RANK：从 8 提升至 64 或 128
-5、修改优化器：从 paged_adamw_8bit 改回标准的 adamw_torch
-## 📂 项目结构
+本项目使用 `Qwen/Qwen2.5-1.5B-Instruct` 作为小规模开源基座模型，通过 TRL `GRPOTrainer` 做可验证奖励强化学习（RLVR），让模型以 R1 风格输出：
 
 ```text
-24game-grpo/
-├── data/
-│   ├── prepare_data.py      # 数据获取与清洗脚本
-│   ├── train.jsonl          # 训练集 (包含防幻觉测试数据)
-│   └── test.jsonl           # 测试集 (game-of-24 难题)
-├── src/
-│   ├── prompts.py           # System Prompt 及对话模板
-│   └── rewards.py           # 环境裁判系统 (正则提取、eval打分、日志记录)
-├── outputs/                 # 训练过程中生成的 Checkpoints 和最终权重
-├── train.py                 # GRPO 训练主程序 (核心入口)
-├── evaluate.py              # 测试集自动化评估脚本 (计算正确率)
-├── play_24.py               # 交互式测试脚本 (出题给模型做)
-├── plot_curve.py            # 训练曲线可视化脚本
-└── requirements.txt         # 依赖清单
+<think>...</think>
+<answer>...</answer>
 ```
 
-## 🛠️ 环境准备 (推荐 WSL2/Ubuntu)
+目标是给定 4 个 1-13 的整数，输出一个只使用这些数字一次、由 `+ - * / ( )` 组成且结果等于 24 的算式；不可解样本要求输出 `UNSOLVABLE`。代码也预留了 3-4 数字任意目标值的 OOD 扩展入口。
 
-1. **创建并激活虚拟环境** (推荐使用 conda 或 venv)：
-   ```bash
-   python -m venv venv
-   source venv/bin/activate
-   ```
+## 项目结构
 
-2. **安装核心依赖**：
-   ```bash
-   pip install -r requirements.txt
-   ```
+```text
+nlp-24-game/
+├── data/
+│   └── prepare_data.py          # 生成训练集、多个测试 split、不可解 holdout 和摘要
+├── src/
+│   ├── game24.py                # 统一裁判：答案提取、安全求值、错误类型分类
+│   ├── prompts.py               # system prompt 和用户题目模板
+│   └── rewards.py               # GRPO 奖励函数、训练指标和样例日志
+├── tests/
+│   └── test_game24.py           # 裁判单元测试
+├── train.py                     # GRPO 训练入口
+├── evaluate.py                  # base/LoRA 评估，支持 pass@k 和结果导出
+├── play_24.py                   # 交互式演示脚本
+├── plot_curve.py                # 训练曲线与错误类型图
+├── rewards_inform.md            # 奖励函数说明
+└── requirements.txt
+```
 
-3. **网络加速配置** (国内环境必备，防止 Hugging Face 连接超时)：
-   ```bash
-   export HF_ENDPOINT=[https://hf-mirror.com](https://hf-mirror.com)
-   ```
+## 环境准备
 
-## 🚀 快速开始
+推荐 Linux/WSL2 + CUDA。6GB 显存可使用默认 4-bit + LoRA 配置；更高显存可增大 `--num-generations`、`--max-completion-length` 和 `--lora-rank`。
 
-请严格按照以下顺序执行脚本：
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
 
-### 第一步：准备数据集
-从 Hugging Face 拉取 24 点原始数据并格式化。
+国内网络可设置 Hugging Face 镜像：
+
+```bash
+export HF_ENDPOINT=https://hf-mirror.com
+```
+
+## 数据准备
+
 ```bash
 python data/prepare_data.py
 ```
-> **输出含义**：在 `data/` 下生成 `train.jsonl` 和 `test.jsonl`，这是模型训练的“课本”。
 
-### 第二步：启动强化学习训练
-启动带有 4-bit 量化和 LoRA 的极低显存微调。所有超参数均在 `train.py` 顶部，可根据显存情况自行调节。
+默认生成：
+
+```text
+data/train.jsonl                  # nlile/24-game 中 solvable=True 的训练集
+data/unsolvable_test.jsonl         # nlile/24-game 中 solvable=False 的不可解 holdout
+data/test_all_nonoverlap.jsonl     # test-time-compute/game-of-24 非训练重叠全集
+data/test_hard_900_1000.jsonl      # Tree of Thoughts 论文 hard split 去重后样本
+data/test_low_solved_rate.jsonl    # solved_rate 最低的一批样本
+data/test.jsonl                    # hard split 的兼容别名
+data/dataset_summary.json          # 数据数量和重叠剔除摘要
+```
+
+可选加分项数据：
+
+```bash
+python data/prepare_data.py --with-countdown --countdown-size 200
+```
+
+会尝试生成 `data/countdown_ood.jsonl`，用于 3-4 数字任意目标值 OOD 验证。
+
+## 训练
+
+低显存默认配置：
+
 ```bash
 python train.py
 ```
-> **输出含义**：
-> * `outputs/final_model/`: 训练完成后保存的 LoRA 权重。这是模型学会的“24点专属技能包”。
-> * `train_log.txt`: 详细记录了模型每一轮的推导过程（如 `<think>` 内的挣扎和计算）。这是理解模型思维模式演变的“行车记录仪”。
-> * `training_metrics.csv`: 记录了每个 Step 的正确率数值，用于后续画图。
 
-### 第三步：绘制训练学习曲线 (训练中途亦可执行)
-将 CSV 数据转化为可视化的折线图。
+常用可调参数：
+
 ```bash
-python plot_curve.py
+python train.py \
+  --run-name lora16_g4_len768 \
+  --num-generations 4 \
+  --max-completion-length 768 \
+  --lora-rank 16
 ```
-> **输出含义**：生成 `accuracy_curve.png`。
-> 图中的 **灰线 (Batch Accuracy)** 代表模型在单个批次（2道题）上的局部正确率，会有剧烈震荡；**红线 (Smoothed Accuracy)** 代表最近100次测验的滑动平均正确率，代表模型真实的学习上升趋势。
 
-### 第四步：在测试集上评估
-加载训练好的 LoRA 权重，在未见过的难题集上自动答题并统计准确率。
+输出：
+
+```text
+outputs/final_model/                         # LoRA 权重
+outputs/checkpoints/                         # 训练 checkpoint
+outputs/runs/<run_name>/config.json          # 本次训练配置
+outputs/runs/<run_name>/training_metrics.csv # accuracy/reward/format/error 曲线数据
+outputs/runs/<run_name>/train_log.txt        # 每轮样例输出与判定
+```
+
+## 绘制训练曲线
+
 ```bash
-python evaluate.py
+python plot_curve.py \
+  --metrics outputs/runs/grpo_qwen25_1_5b_lora8_g2/training_metrics.csv \
+  --output outputs/runs/grpo_qwen25_1_5b_lora8_g2/accuracy_curve.png
 ```
-> **输出含义**：终端将打印最终的 OOD 测试集准确率（Solved Rate）和格式错误率。这是衡量项目成功与否的核心量化指标。
 
+图中包含 batch accuracy、滑动正确率、平均 correctness reward、格式率和主要错误类型计数。
+
+## 评估
+
+评估训练后的 LoRA：
+
+```bash
+python evaluate.py \
+  --test-data-path data/test_hard_900_1000.jsonl \
+  --test-data-path data/test_low_solved_rate.jsonl \
+  --test-data-path data/unsolvable_test.jsonl \
+  --output-jsonl outputs/eval_results.jsonl \
+  --summary-json outputs/eval_summary.json
+```
+
+评估 base model 作为 zero-shot baseline：
+
+```bash
+python evaluate.py --base-only --test-data-path data/test_hard_900_1000.jsonl
+```
+
+评估 pass@k：
+
+```bash
+python evaluate.py --pass-k 4 --temperature 0.7 --test-data-path data/test_hard_900_1000.jsonl
+```
+
+指标包括 first@1、pass@k、格式正确率、正确数、不可解 honest rate、fabrication/error 类型分布，并保存逐题回复，方便报告做定性分析。
+
+## 交互式展示
+
+```bash
+python play_24.py 3 3 8 8
+```
+
+或进入交互模式：
+
+```bash
+python play_24.py
+```
+
+任意目标值扩展示例：
+
+```bash
+python play_24.py 2 3 7 --target 17
+```
+
+## 报告建议
+
+报告里建议至少包含：
+
+1. 任务定义和 RLVR/GRPO 背景。
+2. 数据构造：训练集、hard OOD、low solved-rate、不可解 holdout 的数量和去重策略。
+3. 奖励函数：格式奖励、可验证 correctness reward、不可解诚实性奖励和错误分类。
+4. 实验设置：base zero-shot、GRPO LoRA、可选超参数消融。
+5. 定量结果：solved rate、format rate、honest/fabrication rate、pass@k。
+6. 定性分析：成功样例、数字偷换/格式错误/算错值/不可解胡编样例。
+7. 局限性：RL 训练不稳定、低显存下 `num_generations=2` 的限制、复杂搜索题仍依赖采样。

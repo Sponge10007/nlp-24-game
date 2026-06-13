@@ -1,125 +1,166 @@
+import argparse
+import json
+import os
+
 import torch
 from datasets import load_dataset
-from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from peft import LoraConfig, get_peft_model
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import GRPOConfig, GRPOTrainer
 
-# 导入自定义模块
 from src.prompts import SYSTEM_PROMPT, get_prompt
-from src.rewards import format_reward, correctness_reward
+from src.rewards import configure_reward_logging, correctness_reward, flush_reward_logs, format_reward
 
-# ==========================================================================================
-# 🛠️ 训练超参数配置中心 (Hyperparameter Configuration)
-# ------------------------------------------------------------------------------------------
-# 提示：在进行消融实验或适配不同显卡时，请主要修改此处的参数。
-# 当前默认配置专为 6GB 显存 (如 RTX 2060/3060/4050 Laptop) 极限微调设计。
-# ==========================================================================================
 
-# [1. 基础路径配置]
-MODEL_NAME = "Qwen/Qwen2.5-1.5B-Instruct"  # 基座模型，如果不翻墙可配合 export HF_ENDPOINT=https://hf-mirror.com 使用
-TRAIN_DATA_PATH = "data/train.jsonl"       # 由 prepare_data.py 生成的训练集路径
-OUTPUT_DIR = "./outputs/final_model"       # 训练完毕后 LoRA 权重的保存位置
+MODEL_NAME = "Qwen/Qwen2.5-1.5B-Instruct"
+TRAIN_DATA_PATH = "data/train.jsonl"
+OUTPUT_DIR = "./outputs/final_model"
 
-# [2. GRPO 与 强化学习核心参数]
-# ------------------------------------------------------------------------------------------
-NUM_GENERATIONS = 2          # 【极其吃显存】每次出题让模型并行生成的回答数。GRPO机制要求最少为2。6GB显存死守2，如有24GB显存可设为8或16。
-KL_COEF = 0.05               # 【防止学傻的护城河】KL散度惩罚系数。模型如果输出乱码/标点符号，调大它(如0.1)；如果不愿意尝试新的推导格式，调小它(如0.01)。
-MAX_PROMPT_LENGTH = 128      # 提示词最大截断长度。24点题目很短，128绝对够用。
-MAX_COMPLETION_LENGTH = 384  # 【已修改】推理过程（<think>内部）最大长度。适当调大以防模型没算完就被截断扣分。
-NUM_TRAIN_EPOCHS=6           # 训练轮数，3-15，理论上越大越好
+NUM_GENERATIONS = 2
+KL_COEF = 0.05
+MAX_PROMPT_LENGTH = 128
+MAX_COMPLETION_LENGTH = 384
+NUM_TRAIN_EPOCHS = 6
 
-# [3. 学习率与批处理 (Optimizer & Batch)]
-# ------------------------------------------------------------------------------------------
-LEARNING_RATE = 5e-6         # 【必须极小】RL的试错过程极不稳定，学习率通常是 SFT 的十分之一。除非一直不收敛，否则不要轻易调大。
-PER_DEVICE_BATCH_SIZE = 1    # 单卡物理 Batch Size，6GB显存只能设为 1。
-GRAD_ACCUM_STEPS = 8         # 梯度累加步数。真实 Batch Size = 物理Batch * 累加步数。这里等效为8，保证梯度下降方向平稳。
-LOGGING_STEPS = 10           # 每跑多少步在控制台打印一次 loss。
+LEARNING_RATE = 5e-6
+PER_DEVICE_BATCH_SIZE = 1
+GRAD_ACCUM_STEPS = 8
+LOGGING_STEPS = 10
 
-# [4. LoRA 适配器参数]
-# ------------------------------------------------------------------------------------------
-LORA_RANK = 8                # 【模型大脑增量】秩大小。推理任务 8 够用，如果发现怎么都学不会，可以尝试提至 16（会稍微增加显存）。
-LORA_ALPHA = 16              # 缩放系数，业界惯例通常设置为 LORA_RANK 的 2 倍。
+LORA_RANK = 8
+LORA_ALPHA = 16
 
-# ==========================================================================================
-# 👇 以下为系统核心运行逻辑，非必要请勿修改 👇
-# ==========================================================================================
 
 def preprocess_dataset(example):
-    """将 JSONL 中的目标数字转化为标准的对话 Prompt"""
-    user_content = get_prompt(example["target_nums"])
+    user_content = get_prompt(example["target_nums"], example.get("target_value", 24))
     example["prompt"] = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user_content}
+        {"role": "user", "content": user_content},
     ]
     return example
 
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="GRPO train Qwen2.5-1.5B-Instruct on 24-game RLVR.")
+    parser.add_argument("--model-name", default=MODEL_NAME)
+    parser.add_argument("--train-data-path", default=TRAIN_DATA_PATH)
+    parser.add_argument("--output-dir", default=OUTPUT_DIR)
+    parser.add_argument("--checkpoint-dir", default="./outputs/checkpoints")
+    parser.add_argument("--run-name", default="")
+    parser.add_argument("--run-root", default="./outputs/runs")
+
+    parser.add_argument("--num-generations", type=int, default=NUM_GENERATIONS)
+    parser.add_argument("--kl-coef", type=float, default=KL_COEF)
+    parser.add_argument("--max-prompt-length", type=int, default=MAX_PROMPT_LENGTH)
+    parser.add_argument("--max-completion-length", type=int, default=MAX_COMPLETION_LENGTH)
+    parser.add_argument("--num-train-epochs", type=int, default=NUM_TRAIN_EPOCHS)
+
+    parser.add_argument("--learning-rate", type=float, default=LEARNING_RATE)
+    parser.add_argument("--per-device-batch-size", type=int, default=PER_DEVICE_BATCH_SIZE)
+    parser.add_argument("--grad-accum-steps", type=int, default=GRAD_ACCUM_STEPS)
+    parser.add_argument("--logging-steps", type=int, default=LOGGING_STEPS)
+
+    parser.add_argument("--lora-rank", type=int, default=LORA_RANK)
+    parser.add_argument("--lora-alpha", type=int, default=LORA_ALPHA)
+    parser.add_argument("--bf16", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--load-in-4bit", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--optim", default="paged_adamw_8bit")
+    parser.add_argument("--reset-metrics", action=argparse.BooleanOptionalAction, default=True)
+    return parser.parse_args()
+
+
+def save_config(args: argparse.Namespace, run_dir: str) -> None:
+    os.makedirs(run_dir, exist_ok=True)
+    with open(os.path.join(run_dir, "config.json"), "w", encoding="utf-8") as f:
+        json.dump(vars(args), f, ensure_ascii=False, indent=2)
+
+
 def main():
-    print(f"1. 正在加载 Tokenizer: {MODEL_NAME} ...")
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+    args = parse_args()
+    run_name = args.run_name or f"grpo_qwen25_1_5b_lora{args.lora_rank}_g{args.num_generations}"
+    run_dir = os.path.join(args.run_root, run_name)
+    save_config(args, run_dir)
+    configure_reward_logging(
+        metrics_file=os.path.join(run_dir, "training_metrics.csv"),
+        train_log_file=os.path.join(run_dir, "train_log.txt"),
+        reset=args.reset_metrics,
+    )
+
+    print(f"1. Loading tokenizer: {args.model_name}")
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    # 【已修改】显式设置左侧 Padding，防止因果模型生成混乱
     tokenizer.padding_side = "left"
 
-    print("2. 正在以 4-bit 量化加载基座模型 (极限省显存)...")
-    bnb_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_use_double_quant=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.bfloat16
-    )
-    
-    model = AutoModelForCausalLM.from_pretrained(
-        MODEL_NAME,
-        quantization_config=bnb_config,
-        device_map="auto"
-    )
+    print("2. Loading base model...")
+    quantization_config = None
+    torch_dtype = torch.bfloat16 if args.bf16 else torch.float16
+    if args.load_in_4bit:
+        quantization_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch_dtype,
+        )
 
-    print(f" 3. 正在注入 LoRA 适配器 (Rank={LORA_RANK})...")
+    model_kwargs = {"device_map": "auto"}
+    if quantization_config is not None:
+        model_kwargs["quantization_config"] = quantization_config
+    else:
+        model_kwargs["torch_dtype"] = torch_dtype
+    model = AutoModelForCausalLM.from_pretrained(args.model_name, **model_kwargs)
+
+    print(f"3. Injecting LoRA adapter (rank={args.lora_rank}, alpha={args.lora_alpha})...")
     lora_config = LoraConfig(
-        r=LORA_RANK,
-        lora_alpha=LORA_ALPHA,
+        r=args.lora_rank,
+        lora_alpha=args.lora_alpha,
         target_modules=["q_proj", "v_proj", "k_proj", "o_proj"],
         task_type="CAUSAL_LM",
-        bias="none"
+        bias="none",
     )
     model = get_peft_model(model, lora_config)
 
-    print(" 4. 正在准备和格式化训练数据...")
-    dataset = load_dataset("json", data_files=TRAIN_DATA_PATH, split="train")
+    print(f"4. Loading train data: {args.train_data_path}")
+    dataset = load_dataset("json", data_files=args.train_data_path, split="train")
     dataset = dataset.map(preprocess_dataset)
 
-    print(" 5. 正在注入 GRPO 训练参数...")
+    print("5. Building GRPO config...")
     training_args = GRPOConfig(
-        output_dir="./outputs/checkpoints",
-        learning_rate=LEARNING_RATE,
-        logging_steps=LOGGING_STEPS,
-        num_generations=NUM_GENERATIONS,
-        num_train_epochs=NUM_TRAIN_EPOCHS,
+        output_dir=args.checkpoint_dir,
+        learning_rate=args.learning_rate,
+        logging_steps=args.logging_steps,
+        num_generations=args.num_generations,
+        num_train_epochs=args.num_train_epochs,
         save_steps=50,
-        max_prompt_length=MAX_PROMPT_LENGTH,
-        max_completion_length=MAX_COMPLETION_LENGTH,
-        per_device_train_batch_size=PER_DEVICE_BATCH_SIZE,
-        gradient_accumulation_steps=GRAD_ACCUM_STEPS,
-        kl_coef=KL_COEF,
-        gradient_checkpointing=True,   # 开启：用计算时间换显存
-        bf16=True,                     # 混合精度
-        optim="paged_adamw_8bit"       # 显存溢出时自动借用系统物理内存
+        max_prompt_length=args.max_prompt_length,
+        max_completion_length=args.max_completion_length,
+        per_device_train_batch_size=args.per_device_batch_size,
+        gradient_accumulation_steps=args.grad_accum_steps,
+        kl_coef=args.kl_coef,
+        gradient_checkpointing=True,
+        bf16=args.bf16,
+        optim=args.optim,
+        report_to="none",
     )
 
-    print("6. 启动 GRPOTrainer，进入强化学习循环...")
+    print("6. Starting GRPO training...")
     trainer = GRPOTrainer(
         model=model,
-        reward_funcs=[format_reward, correctness_reward], 
+        reward_funcs=[format_reward, correctness_reward],
         args=training_args,
         train_dataset=dataset,
-        processing_class=tokenizer
+        processing_class=tokenizer,
     )
-    
-    trainer.train()
-    
-    print(f"训练完成！正在保存 LoRA 权重到 {OUTPUT_DIR} ...")
-    trainer.save_model(OUTPUT_DIR)
+
+    try:
+        trainer.train()
+    finally:
+        flush_reward_logs()
+
+    print(f"Training complete. Saving LoRA weights to {args.output_dir}")
+    trainer.save_model(args.output_dir)
+    print(f"Run artifacts saved to {run_dir}")
+
 
 if __name__ == "__main__":
     main()
