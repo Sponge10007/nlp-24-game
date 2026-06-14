@@ -6,10 +6,13 @@ from typing import Any
 
 from src.game24 import (
     CORRECT,
+    ILLEGAL_CHARACTER,
     FABRICATED_UNSOLVABLE,
     FALSE_UNSOLVABLE_CLAIM,
     MISSING_ANSWER,
+    NUMBER_MISMATCH,
     UNSOLVABLE_CLAIM,
+    WRONG_VALUE,
     completion_to_text,
     extract_answer,
     has_r1_format,
@@ -42,7 +45,48 @@ METRICS_COLUMNS = [
     "division_by_zero_count",
     "wrong_value_count",
     "fabricated_unsolvable_count",
+    "equal_sign_count",
+    "unicode_operator_count",
+    "answer_text_count",
+    "legal_expr_wrong_value_count",
 ]
+
+UNICODE_OPERATOR_RE = re.compile(r"[×✕✖÷]")
+ANSWER_TEXT_RE = re.compile(r"[A-Za-z\u4e00-\u9fff]")
+
+
+def protocol_issue_counts(answer: str) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    if "=" in answer:
+        counts["equal_sign_count"] += 1
+    if UNICODE_OPERATOR_RE.search(answer):
+        counts["unicode_operator_count"] += 1
+    if ANSWER_TEXT_RE.search(answer) and answer.upper() != "UNSOLVABLE":
+        counts["answer_text_count"] += 1
+    return counts
+
+
+def reward_for_judgment(code: str, value: float | None, answer: str) -> float:
+    if code in {CORRECT, UNSOLVABLE_CLAIM}:
+        return 2.0
+    if code == FABRICATED_UNSOLVABLE:
+        return -1.5
+    if code == MISSING_ANSWER:
+        return -0.8
+    if code == FALSE_UNSOLVABLE_CLAIM:
+        return -0.8
+    if code == ILLEGAL_CHARACTER:
+        issues = protocol_issue_counts(answer)
+        if issues["answer_text_count"]:
+            return -0.8
+        if issues["equal_sign_count"] or issues["unicode_operator_count"]:
+            return -0.7
+        return -0.6
+    if code == NUMBER_MISMATCH:
+        return -0.4
+    if code == WRONG_VALUE:
+        return 0.1 if value is not None else -0.3
+    return -0.5 if value is None else 0.0
 
 
 def _ensure_parent(path: str) -> None:
@@ -112,6 +156,7 @@ def correctness_reward(completions, target_nums, solvable=None, target_value=Non
     rewards: list[float] = []
     judgments = []
     code_counts: Counter[str] = Counter()
+    protocol_counts: Counter[str] = Counter()
     format_count = 0
 
     for comp, nums, is_solvable, tgt in zip(completions, target_nums, solvable_values, target_values):
@@ -119,19 +164,13 @@ def correctness_reward(completions, target_nums, solvable=None, target_value=Non
         judgment = judge_answer(ans, nums, target_value=tgt, solvable=bool(is_solvable))
         judgments.append(judgment)
         code_counts[judgment.code] += 1
+        protocol_counts.update(protocol_issue_counts(ans))
+        if judgment.code == WRONG_VALUE and judgment.value is not None:
+            protocol_counts["legal_expr_wrong_value_count"] += 1
         if has_r1_format(comp):
             format_count += 1
 
-        if judgment.ok and judgment.code in {CORRECT, UNSOLVABLE_CLAIM}:
-            rewards.append(2.0)
-        elif judgment.code == FABRICATED_UNSOLVABLE:
-            rewards.append(-1.5)
-        elif judgment.code == MISSING_ANSWER:
-            rewards.append(-0.5)
-        elif not judgment.ok:
-            rewards.append(-0.5 if judgment.value is None else 0.0)
-        else:
-            rewards.append(0.0)
+        rewards.append(reward_for_judgment(judgment.code, judgment.value, ans))
 
     correct_count = code_counts[CORRECT] + code_counts[UNSOLVABLE_CLAIM]
     _history_correct.append(correct_count)
@@ -165,6 +204,10 @@ def correctness_reward(completions, target_nums, solvable=None, target_value=Non
         "division_by_zero_count": code_counts["division_by_zero"],
         "wrong_value_count": code_counts["wrong_value"],
         "fabricated_unsolvable_count": code_counts[FABRICATED_UNSOLVABLE],
+        "equal_sign_count": protocol_counts["equal_sign_count"],
+        "unicode_operator_count": protocol_counts["unicode_operator_count"],
+        "answer_text_count": protocol_counts["answer_text_count"],
+        "legal_expr_wrong_value_count": protocol_counts["legal_expr_wrong_value_count"],
     }
     _csv_buffer.append(",".join(str(row[col]) for col in METRICS_COLUMNS) + "\n")
 

@@ -118,3 +118,13 @@
 - 主要结论：模型学会了一部分 `<think>/<answer>` 外层格式，但没有稳定学会合法且正确的 24 点表达式；最后 100 个 reward step 的平均正确率约 `0.5%`，平均格式率约 `84.9%`。
 - 主要错误：`illegal_character` 和 `number_mismatch`，说明最大瓶颈是 `<answer>` 严格语法和数字使用约束没有学稳。
 - 未做事项：没有改训练代码，没有重跑训练。
+
+# 2026-06-14 可验证答案协议改进
+
+- 改动文件：`src/prompts.py`、`src/rewards.py`、`tests/test_rewards.py`。
+- 目的：下一轮训练先修 `<answer>` 协议，让模型稳定输出 ASCII、无等号、只用给定数字一次的可裁判表达式。
+- Prompt 改动：加入短反例和正例，明确 `<answer>` 只能写 ASCII 算式或精确 `UNSOLVABLE`，禁止 `=24`、解释文字、中文符号、近似词。
+- Reward 改动：保持 `judge_answer()` 严格不变，但在训练 reward 中增加协议塑形，区分等号、Unicode 运算符、文本、数字不匹配、合法但算错等情况。
+- 新增指标：`equal_sign_count`、`unicode_operator_count`、`answer_text_count`、`legal_expr_wrong_value_count`。
+- 新增测试：覆盖 `=24`、`×`、数字不匹配、合法但算错值四类情况。
+- 下一轮建议 run name：`protocol_reward_lora8_g2`；显存允许时可试 `protocol_reward_lora8_g4`。
