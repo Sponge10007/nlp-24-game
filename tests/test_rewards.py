@@ -28,7 +28,25 @@ class RewardProtocolTest(unittest.TestCase):
         judgment = judge_answer(answer, [1, 6, 6, 12])
 
         self.assertEqual(judgment.code, NUMBER_MISMATCH)
-        self.assertEqual(reward_for_judgment(judgment.code, judgment.value, answer), -0.4)
+        self.assertEqual(reward_for_judgment(judgment.code, judgment.value, answer), -0.8)
+
+    def test_copied_prompt_example_is_tracked_and_penalized(self):
+        answer = "8/(3-8/3)"
+        judgment = judge_answer(answer, [1, 6, 6, 12])
+        issues = protocol_issue_counts(answer)
+
+        self.assertEqual(judgment.code, NUMBER_MISMATCH)
+        self.assertEqual(issues["copied_prompt_example_count"], 1)
+        self.assertEqual(reward_for_judgment(judgment.code, judgment.value, answer), -0.9)
+
+    def test_bare_target_is_tracked_and_penalized(self):
+        answer = "24"
+        judgment = judge_answer(answer, [2, 2, 5, 8])
+        issues = protocol_issue_counts(answer, target_value=24)
+
+        self.assertEqual(judgment.code, NUMBER_MISMATCH)
+        self.assertEqual(issues["bare_target_count"], 1)
+        self.assertEqual(reward_for_judgment(judgment.code, judgment.value, answer, 24), -0.9)
 
     def test_legal_wrong_value_gets_small_positive_reward(self):
         answer = "(5*5-11)/2"

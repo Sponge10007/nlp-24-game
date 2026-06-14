@@ -49,24 +49,32 @@ METRICS_COLUMNS = [
     "unicode_operator_count",
     "answer_text_count",
     "legal_expr_wrong_value_count",
+    "bare_target_count",
+    "copied_prompt_example_count",
 ]
 
 UNICODE_OPERATOR_RE = re.compile(r"[×✕✖÷]")
 ANSWER_TEXT_RE = re.compile(r"[A-Za-z\u4e00-\u9fff]")
+COPIED_PROMPT_EXAMPLE = "8/(3-8/3)"
 
 
-def protocol_issue_counts(answer: str) -> Counter[str]:
+def protocol_issue_counts(answer: str, target_value: int | float = 24) -> Counter[str]:
     counts: Counter[str] = Counter()
+    stripped_answer = answer.strip()
     if "=" in answer:
         counts["equal_sign_count"] += 1
     if UNICODE_OPERATOR_RE.search(answer):
         counts["unicode_operator_count"] += 1
-    if ANSWER_TEXT_RE.search(answer) and answer.upper() != "UNSOLVABLE":
+    if ANSWER_TEXT_RE.search(answer) and stripped_answer.upper() != "UNSOLVABLE":
         counts["answer_text_count"] += 1
+    if stripped_answer == str(target_value) or stripped_answer == str(float(target_value)):
+        counts["bare_target_count"] += 1
+    if re.sub(r"\s+", "", answer) == COPIED_PROMPT_EXAMPLE:
+        counts["copied_prompt_example_count"] += 1
     return counts
 
 
-def reward_for_judgment(code: str, value: float | None, answer: str) -> float:
+def reward_for_judgment(code: str, value: float | None, answer: str, target_value: int | float = 24) -> float:
     if code in {CORRECT, UNSOLVABLE_CLAIM}:
         return 2.0
     if code == FABRICATED_UNSOLVABLE:
@@ -83,7 +91,10 @@ def reward_for_judgment(code: str, value: float | None, answer: str) -> float:
             return -0.7
         return -0.6
     if code == NUMBER_MISMATCH:
-        return -0.4
+        issues = protocol_issue_counts(answer, target_value)
+        if issues["bare_target_count"] or issues["copied_prompt_example_count"]:
+            return -0.9
+        return -0.8
     if code == WRONG_VALUE:
         return 0.1 if value is not None else -0.3
     return -0.5 if value is None else 0.0
@@ -164,13 +175,13 @@ def correctness_reward(completions, target_nums, solvable=None, target_value=Non
         judgment = judge_answer(ans, nums, target_value=tgt, solvable=bool(is_solvable))
         judgments.append(judgment)
         code_counts[judgment.code] += 1
-        protocol_counts.update(protocol_issue_counts(ans))
+        protocol_counts.update(protocol_issue_counts(ans, tgt))
         if judgment.code == WRONG_VALUE and judgment.value is not None:
             protocol_counts["legal_expr_wrong_value_count"] += 1
         if has_r1_format(comp):
             format_count += 1
 
-        rewards.append(reward_for_judgment(judgment.code, judgment.value, ans))
+        rewards.append(reward_for_judgment(judgment.code, judgment.value, ans, tgt))
 
     correct_count = code_counts[CORRECT] + code_counts[UNSOLVABLE_CLAIM]
     _history_correct.append(correct_count)
@@ -208,6 +219,8 @@ def correctness_reward(completions, target_nums, solvable=None, target_value=Non
         "unicode_operator_count": protocol_counts["unicode_operator_count"],
         "answer_text_count": protocol_counts["answer_text_count"],
         "legal_expr_wrong_value_count": protocol_counts["legal_expr_wrong_value_count"],
+        "bare_target_count": protocol_counts["bare_target_count"],
+        "copied_prompt_example_count": protocol_counts["copied_prompt_example_count"],
     }
     _csv_buffer.append(",".join(str(row[col]) for col in METRICS_COLUMNS) + "\n")
 

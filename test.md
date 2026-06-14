@@ -128,3 +128,13 @@
 - 新增指标：`equal_sign_count`、`unicode_operator_count`、`answer_text_count`、`legal_expr_wrong_value_count`。
 - 新增测试：覆盖 `=24`、`×`、数字不匹配、合法但算错值四类情况。
 - 下一轮建议 run name：`protocol_reward_lora8_g2`；显存允许时可试 `protocol_reward_lora8_g4`。
+
+# 2026-06-14 修复 GOOD 示例泄漏和裸目标值输出
+
+- 改动文件：`src/prompts.py`、`src/rewards.py`、`tests/test_rewards.py`、`training_failure_analysis.md`。
+- 问题：`protocol_reward_lora8_g2` 的格式率提升到约 `92.25%`，但最后 100 step 准确率仍约 `0.125%`；日志显示模型大量背诵 prompt 中的 `GOOD: <answer>8/(3-8/3)</answer>`，最后 800 个答案中该模板出现 260 次，单独输出 `24` 出现 96 次。
+- Prompt 改动：删除可复制的 `GOOD: <answer>8/(3-8/3)</answer>`，改为规则描述，强调不得复用示例数字，必须使用本题给定数字且每个只用一次。
+- Reward 改动：将普通 `number_mismatch` 惩罚从 `-0.4` 加重到 `-0.8`，对裸目标值和复制旧 GOOD 示例加重到 `-0.9`。
+- 新增指标：`bare_target_count`、`copied_prompt_example_count`。
+- 新增/更新测试：覆盖复制 `8/(3-8/3)`、裸 `24`、加重 number mismatch、合法但算错仍保留小正奖励。
+- 下一轮建议先跑 `python train.py --run-name no_example_leak_lora8_g2`；若 number mismatch 明显下降，再跑 `--num-generations 4` 对比。

@@ -196,3 +196,21 @@
 - 定性样例：`outputs/runs/grpo_qwen25_1_5b_lora8_g2/train_log.txt`
 - 最终 LoRA：`outputs/final_model/`
 - 中间 checkpoint：`outputs/checkpoints/`
+
+## 8. protocol_reward_lora8_g2 后续发现
+
+`protocol_reward_lora8_g2` 使用了更强的 answer 协议 prompt 和 reward shaping。该 run 说明协议修复方向有效，但暴露了新的 prompt 示例泄漏问题：
+
+- 最后 100 个 reward step 的平均 `format_rate` 提升到约 `92.25%`。
+- 最后 100 个 reward step 的平均 `batch_accuracy` 仍只有约 `0.125%`。
+- `illegal_character_count` 相比旧 run 下降，但 `number_mismatch_count` 成为主要错误。
+- 最后 800 个答案中，`8/(3-8/3)` 出现 260 次，单独输出 `24` 出现 96 次。
+
+原因是 prompt 中的具体正例 `GOOD: <answer>8/(3-8/3)</answer>` 被模型当作通用答案模板复制。由于大多数题目的数字不是 `[3, 3, 8, 8]`，复制该表达式会触发 `number_mismatch`。
+
+因此后续修复策略调整为：
+
+- 删除可复制的具体 GOOD 表达式，只保留规则描述。
+- 加重 `number_mismatch` 惩罚。
+- 单独统计 `bare_target_count` 和 `copied_prompt_example_count`。
+- 先跑 `no_example_leak_lora8_g2`，确认模板背诵和裸目标值输出下降后，再考虑 `num_generations=4`。
