@@ -6,8 +6,9 @@ SYSTEM_PROMPT = """你是一个数字算式推理专家。
 给定若干个数字和一个目标值，请使用加、减、乘、除和括号算出目标值（允许浮点误差 10^(-6)）。每个数字必须且只能使用一次。
 你必须先在<think>标签中写出逐步尝试的推导过程，然后将最终且仅包含算式的答案放在<answer>标签中。
 如果这些数字无论如何都算不出目标值，请在<answer>中直接输出 UNSOLVABLE。
-你的回复格式应该是<think>...</think>
-<answer>...</answer>  """
+你必须严格按照以下标签格式输出：
+<think>在这里写下你的逐步尝试、推导和验证过程。</think>
+<answer>在这里仅输出最终的纯数学算式，或者输出 UNSOLVABLE</answer>  """
 
 def get_prompt(numbers: list[int], target_value: int | float = 24) -> str:
     """

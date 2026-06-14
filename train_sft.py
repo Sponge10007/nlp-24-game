@@ -3,12 +3,6 @@ import inspect
 import json
 import os
 
-import torch
-from datasets import load_dataset
-from peft import LoraConfig, get_peft_model
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
-from trl import SFTConfig, SFTTrainer
-
 
 MODEL_NAME = "Qwen/Qwen2.5-1.5B-Instruct"
 WARMUP_DATA_PATH = "data/warmup_train.jsonl"
@@ -65,7 +59,9 @@ def render_text(tokenizer, example: dict) -> dict:
     return example
 
 
-def build_sft_config(args: argparse.Namespace) -> SFTConfig:
+def build_sft_config(args: argparse.Namespace):
+    from trl import SFTConfig
+
     config_kwargs = {
         "output_dir": args.checkpoint_dir,
         "learning_rate": args.learning_rate,
@@ -95,6 +91,8 @@ def build_sft_config(args: argparse.Namespace) -> SFTConfig:
 
 
 def build_sft_trainer(tokenizer, model, training_args, dataset):
+    from trl import SFTTrainer
+
     trainer_kwargs = {
         "model": model,
         "args": training_args,
@@ -118,6 +116,12 @@ def build_sft_trainer(tokenizer, model, training_args, dataset):
 
 def main():
     args = parse_args()
+
+    import torch
+    from datasets import load_dataset
+    from peft import LoraConfig, get_peft_model
+    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+
     run_name = args.run_name or f"sft_warmup_lora{args.lora_rank}"
     run_dir = os.path.join(args.run_root, run_name)
     save_config(args, run_dir)
