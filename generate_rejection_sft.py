@@ -3,6 +3,7 @@ import json
 import os
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from tqdm import tqdm
@@ -20,6 +21,8 @@ BASE_URL = "https://api.deepseek.com"
 API_MODEL = "deepseek-reasoner"
 INPUT_DATA_PATH = "data/train.jsonl"
 OUTPUT_DATA_PATH = "data/rejection_sft_train.jsonl"
+DEFAULT_LIMIT = 500
+MAX_WORKERS = 8
 
 
 def load_jsonl(path: str) -> list[dict[str, Any]]:
@@ -37,13 +40,17 @@ def write_jsonl(path: str, rows: list[dict[str, Any]]) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build SFT data with DeepSeek API rejection sampling.")
+    parser = argparse.ArgumentParser(
+        description="Build SFT data with DeepSeek API rejection sampling.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
     parser.add_argument("--api-key-env", default=API_KEY_ENV)
     parser.add_argument("--base-url", default=BASE_URL)
     parser.add_argument("--api-model", default=API_MODEL)
     parser.add_argument("--input-data-path", default=INPUT_DATA_PATH)
     parser.add_argument("--output-data-path", default=OUTPUT_DATA_PATH)
-    parser.add_argument("--limit", type=int, default=-1)
+    parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT, help="Maximum number of input cases to process.")
+    parser.add_argument("--max-workers", type=int, default=MAX_WORKERS, help="Number of cases to process concurrently.")
 
     parser.add_argument("--attempts-per-case", type=int, default=16)
     parser.add_argument("--max-tokens", type=int, default=2048)
@@ -78,6 +85,70 @@ def call_deepseek(client, target_nums: list[int], target_value: int | float, arg
     return build_completion_from_deepseek_response(reasoning_content, content)
 
 
+def sample_case(client, case_index: int, case: dict[str, Any], args: argparse.Namespace) -> tuple[int, dict[str, Any] | None, Counter[str]]:
+    counts: Counter[str] = Counter()
+    target_nums = case["target_nums"]
+    target_value = case.get("target_value", 24)
+    solvable = bool(case.get("solvable", True))
+
+    completions: list[str] = []
+    sample = None
+    for _ in range(args.attempts_per_case):
+        try:
+            completions.append(call_deepseek(client, target_nums, target_value, args))
+        except Exception as exc:
+            counts["api_error"] += 1
+            tqdm.write(f"API error for nums={target_nums}, target={target_value}: {exc}")
+        sample = select_rejection_sample(
+            completions,
+            target_nums,
+            target_value=target_value,
+            solvable=solvable,
+            require_r1_format=args.require_r1_format,
+        )
+        if sample is not None:
+            break
+        if args.sleep_seconds > 0:
+            time.sleep(args.sleep_seconds)
+
+    if sample is None:
+        counts["rejected_all"] += 1
+        for completion in completions:
+            rejected = select_rejection_sample(
+                [completion],
+                target_nums,
+                target_value=target_value,
+                solvable=solvable,
+                require_r1_format=False,
+            )
+            if rejected is None:
+                counts["rejected_invalid"] += 1
+        return case_index, None, counts
+
+    counts["accepted"] += 1
+    counts[sample.source] += 1
+    counts[sample.code] += 1
+    return case_index, build_sft_row(case, sample), counts
+
+
+def build_rejection_sft_rows(client, cases: list[dict[str, Any]], args: argparse.Namespace) -> tuple[list[dict[str, Any]], Counter[str]]:
+    rows_by_index: dict[int, dict[str, Any]] = {}
+    counts: Counter[str] = Counter()
+    with ThreadPoolExecutor(max_workers=max(1, args.max_workers)) as executor:
+        futures = [
+            executor.submit(sample_case, client, case_index, case, args)
+            for case_index, case in enumerate(cases)
+        ]
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Rejection sampling"):
+            case_index, row, case_counts = future.result()
+            counts.update(case_counts)
+            if row is not None:
+                rows_by_index[case_index] = row
+
+    rows = [rows_by_index[index] for index in sorted(rows_by_index)]
+    return rows, counts
+
+
 def main() -> None:
     args = parse_args()
     cases = load_jsonl(args.input_data_path)
@@ -86,52 +157,7 @@ def main() -> None:
     print(f"Loaded {len(cases)} cases from {args.input_data_path}.")
 
     client = build_client(args)
-
-    rows: list[dict[str, Any]] = []
-    counts: Counter[str] = Counter()
-    for case in tqdm(cases, desc="Rejection sampling"):
-        target_nums = case["target_nums"]
-        target_value = case.get("target_value", 24)
-        solvable = bool(case.get("solvable", True))
-
-        completions: list[str] = []
-        sample = None
-        for _ in range(args.attempts_per_case):
-            try:
-                completions.append(call_deepseek(client, target_nums, target_value, args))
-            except Exception as exc:
-                counts["api_error"] += 1
-                tqdm.write(f"API error for nums={target_nums}, target={target_value}: {exc}")
-            sample = select_rejection_sample(
-                completions,
-                target_nums,
-                target_value=target_value,
-                solvable=solvable,
-                require_r1_format=args.require_r1_format,
-            )
-            if sample is not None:
-                break
-            if args.sleep_seconds > 0:
-                time.sleep(args.sleep_seconds)
-
-        if sample is None:
-            counts["rejected_all"] += 1
-            for completion in completions:
-                rejected = select_rejection_sample(
-                    [completion],
-                    target_nums,
-                    target_value=target_value,
-                    solvable=solvable,
-                    require_r1_format=False,
-                )
-                if rejected is None:
-                    counts["rejected_invalid"] += 1
-            continue
-
-        counts["accepted"] += 1
-        counts[sample.source] += 1
-        counts[sample.code] += 1
-        rows.append(build_sft_row(case, sample))
+    rows, counts = build_rejection_sft_rows(client, cases, args)
 
     write_jsonl(args.output_data_path, rows)
     summary_path = os.path.splitext(args.output_data_path)[0] + "_summary.json"
@@ -141,8 +167,10 @@ def main() -> None:
                 "input": args.input_data_path,
                 "output": args.output_data_path,
                 "total_cases": len(cases),
+                "processed_cases": len(cases),
                 "written_rows": len(rows),
                 "attempts_per_case": args.attempts_per_case,
+                "max_workers": args.max_workers,
                 "api_model": args.api_model,
                 "counts": dict(counts),
             },

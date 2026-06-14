@@ -1,5 +1,7 @@
 import unittest
+from argparse import Namespace
 
+from generate_rejection_sft import build_rejection_sft_rows
 from src.rejection_sampling import (
     build_completion_from_deepseek_response,
     build_sft_row,
@@ -82,6 +84,38 @@ class RejectionSamplingTest(unittest.TestCase):
         sample = validate_rejection_candidate(completion, [3, 3, 8, 8])
         self.assertFalse(sample.accepted)
         self.assertEqual(sample.code, "number_mismatch")
+
+    def test_parallel_row_builder_preserves_input_order(self):
+        class FakeClient:
+            pass
+
+        cases = [
+            {"target_nums": [1, 2, 3, 4], "solvable": True},
+            {"target_nums": [3, 3, 8, 8], "solvable": True},
+        ]
+        args = Namespace(
+            attempts_per_case=1,
+            require_r1_format=True,
+            sleep_seconds=0,
+            max_workers=2,
+        )
+
+        import generate_rejection_sft
+
+        original_call = generate_rejection_sft.call_deepseek
+        try:
+            def fake_call(_client, target_nums, _target_value, _args):
+                if target_nums == [1, 2, 3, 4]:
+                    return "<think>sum</think>\n<answer>1*2*3*4</answer>"
+                return "<think>division</think>\n<answer>8/(3-(8/3))</answer>"
+
+            generate_rejection_sft.call_deepseek = fake_call
+            rows, counts = build_rejection_sft_rows(FakeClient(), cases, args)
+        finally:
+            generate_rejection_sft.call_deepseek = original_call
+
+        self.assertEqual([row["target_nums"] for row in rows], [[1, 2, 3, 4], [3, 3, 8, 8]])
+        self.assertEqual(counts["accepted"], 2)
 
 
 if __name__ == "__main__":

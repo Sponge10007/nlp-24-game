@@ -170,9 +170,11 @@ python play_24.py 2 3 7 --target 17
 
 如果直接运行 `python train.py`，就是从 base model 直接做 GRPO，可作为 zero-RL baseline。但当前实验中直接 GRPO 容易长期拿不到正确性奖励，因此推荐主流程改为：先调用 DeepSeek API 做拒绝采样生成 SFT 数据，再进行 SFT 训练，最后从 SFT adapter 继续 GRPO。
 
+GRPO 阶段的 correctness reward 也加入了距离惩罚：当模型输出的表达式合法、数字匹配、可计算但值不等于目标值时，会按 `abs(value - target)` 给平滑负奖励；离目标越近惩罚越轻，正确答案仍保持最高奖励。
+
 ### 新增脚本与模块
 
-- `generate_rejection_sft.py`：调用 DeepSeek API 对每道题多次采样，并用本地裁判函数筛选可用于 SFT 的正确 completion。
+- `generate_rejection_sft.py`：调用 DeepSeek API 对题目并行拒绝采样，并用本地裁判函数筛选可用于 SFT 的正确 completion；默认处理前 500 题、8 个并行 worker。
 - `train_sft.py`：读取 `data/rejection_sft_train.jsonl`，使用 4-bit + LoRA 做低显存 SFT 训练，默认输出到 `outputs/sft_model`。
 - `src/rejection_sampling.py`：拒绝采样核心逻辑，包括 DeepSeek 响应转 `<think>/<answer>`、候选 completion 校验、选择首个通过样本、构造 SFT 数据行。
 
@@ -213,6 +215,7 @@ api_key_env: DEEPSEEK_API_KEY
 4. 使用 `judge_answer` 校验数字使用、字符合法性、表达式值和不可解声明。
 5. 只保留第一个通过裁判的 completion，写入 SFT 数据。
 6. 如果所有采样都失败，跳过该题，并在 summary 中统计为 `rejected_all`。
+7. 默认只处理前 500 题以控制 API 成本；这个限制只影响拒绝采样脚本，不会截断 `data/train.jsonl`。
 
 生成的 SFT 数据写入 `data/rejection_sft_train.jsonl`，该文件被 `.gitignore` 忽略，需要在本地生成。
 
@@ -232,7 +235,9 @@ python generate_rejection_sft.py \
   --output-data-path data/rejection_sft_train.jsonl \
   --api-model deepseek-reasoner \
   --attempts-per-case 16 \
-  --max-tokens 2048
+  --max-tokens 2048 \
+  --limit 500 \
+  --max-workers 8
 ```
 
 可选参数：
@@ -241,9 +246,10 @@ python generate_rejection_sft.py \
 --api-key-env DEEPSEEK_API_KEY      API key 所在环境变量
 --base-url https://api.deepseek.com DeepSeek API 地址
 --sleep-seconds 0.2                 每次 API 调用后的等待时间
+--max-workers 8                     并行处理题目的 worker 数
 --temperature 0.6                   采样温度
 --top-p 0.95                        nucleus sampling 参数
---limit N                           只处理前 N 条样本，便于小规模试跑
+--limit N                           只处理前 N 条样本，默认 500，用于控制 API 成本
 ```
 
 第三步，执行 SFT 训练：

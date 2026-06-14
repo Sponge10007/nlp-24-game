@@ -10,6 +10,7 @@ from src.game24 import (
     FALSE_UNSOLVABLE_CLAIM,
     MISSING_ANSWER,
     UNSOLVABLE_CLAIM,
+    WRONG_VALUE,
     completion_to_text,
     extract_answer,
     has_r1_format,
@@ -31,6 +32,7 @@ METRICS_COLUMNS = [
     "batch_accuracy",
     "smoothed_accuracy",
     "mean_correctness_reward",
+    "mean_wrong_value_distance",
     "format_rate",
     "correct_count",
     "unsolvable_honest_count",
@@ -97,6 +99,11 @@ def format_reward(completions, **kwargs) -> list[float]:
     return rewards
 
 
+def wrong_value_distance_reward(value: float, target_value: int | float) -> float:
+    distance = abs(float(value) - float(target_value))
+    return -distance / (distance + abs(float(target_value)) + 1.0)
+
+
 def correctness_reward(completions, target_nums, solvable=None, target_value=None, **kwargs) -> list[float]:
     global _log_step, _history_correct, _history_total
 
@@ -113,6 +120,7 @@ def correctness_reward(completions, target_nums, solvable=None, target_value=Non
     judgments = []
     code_counts: Counter[str] = Counter()
     format_count = 0
+    wrong_value_distances: list[float] = []
 
     for comp, nums, is_solvable, tgt in zip(completions, target_nums, solvable_values, target_values):
         ans = extract_answer(comp)
@@ -128,6 +136,9 @@ def correctness_reward(completions, target_nums, solvable=None, target_value=Non
             rewards.append(-1.5)
         elif judgment.code == MISSING_ANSWER:
             rewards.append(-0.5)
+        elif judgment.code == WRONG_VALUE and judgment.value is not None:
+            wrong_value_distances.append(abs(float(judgment.value) - float(tgt)))
+            rewards.append(wrong_value_distance_reward(judgment.value, tgt))
         elif not judgment.ok:
             rewards.append(-0.5 if judgment.value is None else 0.0)
         else:
@@ -143,6 +154,11 @@ def correctness_reward(completions, target_nums, solvable=None, target_value=Non
     batch_accuracy = (correct_count / total) * 100 if total else 0.0
     format_rate = (format_count / total) * 100 if total else 0.0
     mean_reward = sum(rewards) / len(rewards) if rewards else 0.0
+    mean_wrong_value_distance = (
+        sum(wrong_value_distances) / len(wrong_value_distances)
+        if wrong_value_distances
+        else 0.0
+    )
 
     print(
         f"\n[Step {_log_step}] acc={batch_accuracy:5.1f}% | "
@@ -154,6 +170,7 @@ def correctness_reward(completions, target_nums, solvable=None, target_value=Non
         "batch_accuracy": f"{batch_accuracy:.2f}",
         "smoothed_accuracy": f"{smoothed_accuracy:.2f}",
         "mean_correctness_reward": f"{mean_reward:.4f}",
+        "mean_wrong_value_distance": f"{mean_wrong_value_distance:.4f}",
         "format_rate": f"{format_rate:.2f}",
         "correct_count": code_counts[CORRECT],
         "unsolvable_honest_count": code_counts[UNSOLVABLE_CLAIM],
