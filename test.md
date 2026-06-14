@@ -101,7 +101,7 @@
 - 重新生成或验证命令。
 - 关键结果或风险。
 
-### 2026-06-13 训练脚本兼容新版 TRL
+# 2026-06-13 训练脚本兼容新版 TRL
 
 - 改动文件：`train.py`。
 - 问题：本地环境安装的是 `trl 1.5.1`，`GRPOConfig` 已经不再支持旧参数 `max_prompt_length`，并且旧参数 `kl_coef` 在新版中对应 `beta`。
@@ -110,3 +110,11 @@
   - `./venv/bin/python -m py_compile train.py`
   - 用 `bf16=False` 做了轻量 `GRPOConfig` 构造验证，确认 `beta=0.05`、`max_completion_length=384`、`num_generations=2` 能正确写入配置。
 - 注意：当前 Codex 工具环境无法初始化 NVML/GPU，所以 `bf16=True` 的轻量配置验证会报 “setup doesn't support bf16/gpu”。用户本机训练命令刚才已经能加载 CUDA/bitsandbytes 权重，因此实际训练环境应以用户终端为准。
+
+# 2026-06-14 当前训练失败现象分析
+
+- 新增文件：`training_failure_analysis.md`。
+- 目的：整理 `grpo_qwen25_1_5b_lora8_g2` 这次完整 run 的失败现象，作为报告素材。
+- 主要结论：模型学会了一部分 `<think>/<answer>` 外层格式，但没有稳定学会合法且正确的 24 点表达式；最后 100 个 reward step 的平均正确率约 `0.5%`，平均格式率约 `84.9%`。
+- 主要错误：`illegal_character` 和 `number_mismatch`，说明最大瓶颈是 `<answer>` 严格语法和数字使用约束没有学稳。
+- 未做事项：没有改训练代码，没有重跑训练。
