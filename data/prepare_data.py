@@ -8,7 +8,8 @@ from functools import lru_cache
 from itertools import combinations_with_replacement
 from typing import Any
 
-from datasets import load_dataset
+from src.prompts import SYSTEM_PROMPT, get_prompt
+from src.warmup_completion import build_warmup_completion
 
 
 TRAIN_PATH = "data/train.jsonl"
@@ -18,10 +19,17 @@ TEST_HARD_PATH = "data/test_hard_900_1000.jsonl"
 TEST_LOW_SOLVED_RATE_PATH = "data/test_low_solved_rate.jsonl"
 UNSOLVABLE_TEST_PATH = "data/unsolvable_test.jsonl"
 COUNTDOWN_OOD_PATH = "data/countdown_ood.jsonl"
+WARMUP_TRAIN_PATH = "data/warmup_train.jsonl"
 SUMMARY_PATH = "data/dataset_summary.json"
 HARD_START_INDEX = 900
 HARD_END_INDEX = 1000
 DEFAULT_UNSOLVABLE_SEED = 20240613
+
+
+def load_hf_dataset(*args: Any, **kwargs: Any):
+    from datasets import load_dataset
+
+    return load_dataset(*args, **kwargs)
 
 
 def parse_nums(row: dict[str, Any], keys: tuple[str, ...]) -> list[int]:
@@ -150,7 +158,7 @@ def select_tot_splits(
 
 def prepare_tot_data(low_solved_rate_size: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     print("1. Loading test-time-compute/game-of-24 for held-out tests...")
-    tot_ds = load_dataset("test-time-compute/game-of-24", split="train")
+    tot_ds = load_hf_dataset("test-time-compute/game-of-24", split="train")
 
     all_samples: list[dict[str, Any]] = []
     for index, row in enumerate(tot_ds):
@@ -201,7 +209,7 @@ def prepare_tot_data(low_solved_rate_size: int) -> tuple[list[dict[str, Any]], l
 
 def prepare_nlile_data(test_keys: set[tuple[int, ...]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     print("\n2. Loading nlile/24-game for train data...")
-    nlile_ds = load_dataset("nlile/24-game", split="train")
+    nlile_ds = load_hf_dataset("nlile/24-game", split="train")
 
     train_samples: list[dict[str, Any]] = []
     dataset_unsolvable_samples: list[dict[str, Any]] = []
@@ -324,7 +332,7 @@ def prepare_countdown_ood(max_samples: int) -> list[dict[str, Any]]:
     print("\n4. Loading Jiayi-Pan/Countdown-Tasks-3to4 for optional OOD extension...")
     samples: list[dict[str, Any]] = []
     try:
-        ds = load_dataset("Jiayi-Pan/Countdown-Tasks-3to4", split="train")
+        ds = load_hf_dataset("Jiayi-Pan/Countdown-Tasks-3to4", split="train")
     except Exception as exc:
         print(f"   Skipped countdown OOD data: {exc}")
         write_jsonl(COUNTDOWN_OOD_PATH, samples)
@@ -352,12 +360,53 @@ def prepare_countdown_ood(max_samples: int) -> list[dict[str, Any]]:
     return samples
 
 
+def build_warmup_sample(sample: dict[str, Any]) -> dict[str, Any]:
+    target_nums = sample["target_nums"]
+    target_value = sample.get("target_value", 24)
+    solvable = bool(sample.get("solvable", True))
+    warmup = build_warmup_completion(target_nums, target_value=target_value, solvable=solvable)
+    return {
+        **sample,
+        "solvable": warmup.solvable,
+        "solution": warmup.solution,
+        "prompt": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": get_prompt(target_nums, target_value)},
+        ],
+        "completion": warmup.completion,
+    }
+
+
+def prepare_warmup_data(
+    train_samples: list[dict[str, Any]],
+    unsolvable_samples: list[dict[str, Any]],
+    warmup_path: str,
+    warmup_unsolvable_size: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    print("\n5. Building verified SFT warmup data...")
+    selected_unsolvable = unsolvable_samples[: max(0, warmup_unsolvable_size)]
+    warmup_samples = [build_warmup_sample(sample) for sample in train_samples + selected_unsolvable]
+    write_jsonl(warmup_path, warmup_samples)
+    print(f"   Wrote {warmup_path}: {len(warmup_samples)} verified warmup cases.")
+
+    stats = {
+        "path": warmup_path,
+        "count": len(warmup_samples),
+        "solvable_count": len(train_samples),
+        "unsolvable_count": len(selected_unsolvable),
+    }
+    return warmup_samples, stats
+
+
 def prepare_data(
     low_solved_rate_size: int = 100,
     with_countdown: bool = False,
     countdown_size: int = 200,
     unsolvable_size: int = 100,
     unsolvable_seed: int = DEFAULT_UNSOLVABLE_SEED,
+    with_warmup: bool = False,
+    warmup_path: str = WARMUP_TRAIN_PATH,
+    warmup_unsolvable_size: int = 32,
 ) -> None:
     os.makedirs("data", exist_ok=True)
 
@@ -366,6 +415,14 @@ def prepare_data(
     train_samples, nlile_stats = prepare_nlile_data(test_keys)
     unsolvable_samples, unsolvable_stats = prepare_unsolvable_data(unsolvable_size, unsolvable_seed)
     countdown_samples = prepare_countdown_ood(countdown_size) if with_countdown else []
+    warmup_stats = None
+    if with_warmup:
+        _, warmup_stats = prepare_warmup_data(
+            train_samples=train_samples,
+            unsolvable_samples=unsolvable_samples,
+            warmup_path=warmup_path,
+            warmup_unsolvable_size=warmup_unsolvable_size,
+        )
 
     summary = {
         "train": {
@@ -401,6 +458,10 @@ def prepare_data(
         },
         "tot_stats": tot_stats,
         "countdown_ood": {"path": COUNTDOWN_OOD_PATH, "count": len(countdown_samples), "enabled": with_countdown},
+        "warmup": {
+            "enabled": with_warmup,
+            **(warmup_stats or {"path": warmup_path, "count": 0, "solvable_count": 0, "unsolvable_count": 0}),
+        },
     }
     write_summary(summary)
     print(f"\nWrote {SUMMARY_PATH}.")
@@ -413,6 +474,9 @@ def main() -> None:
     parser.add_argument("--unsolvable-seed", type=int, default=DEFAULT_UNSOLVABLE_SEED, help="Shuffle seed for the local unsolvable holdout.")
     parser.add_argument("--with-countdown", action="store_true", help="Also create Countdown 3-4 numbers OOD extension data.")
     parser.add_argument("--countdown-size", type=int, default=200, help="Maximum countdown OOD cases to export.")
+    parser.add_argument("--with-warmup", action="store_true", help="Also create verified SFT warmup data.")
+    parser.add_argument("--warmup-path", default=WARMUP_TRAIN_PATH, help="Output path for verified SFT warmup JSONL.")
+    parser.add_argument("--warmup-unsolvable-size", type=int, default=32, help="Number of unsolvable cases to mix into warmup data.")
     args = parser.parse_args()
 
     prepare_data(
@@ -421,6 +485,9 @@ def main() -> None:
         countdown_size=args.countdown_size,
         unsolvable_size=args.unsolvable_size,
         unsolvable_seed=args.unsolvable_seed,
+        with_warmup=args.with_warmup,
+        warmup_path=args.warmup_path,
+        warmup_unsolvable_size=args.warmup_unsolvable_size,
     )
 
 

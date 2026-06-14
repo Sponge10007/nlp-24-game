@@ -165,3 +165,22 @@ python play_24.py 2 3 7 --target 17
 5. 定量结果：solved rate、format rate、honest/fabrication rate、pass@k。
 6. 定性分析：成功样例、数字偷换/格式错误/算错值/不可解胡编样例。
 7. 局限性：RL 训练不稳定、低显存下 `num_generations=2` 的限制、复杂搜索题仍依赖采样。
+
+## SFT warmup + GRPO
+
+If GRPO accuracy stays near 0, first build verified warmup completions and run a short SFT stage before RL:
+
+```bash
+python data/prepare_data.py --with-warmup --with-countdown --countdown-size 200
+python train_sft.py --run-name sft_warmup_lora8
+python train.py --adapter-init-path outputs/sft_model --run-name sft_then_grpo_lora8_g2
+```
+
+Warmup rows are written to `data/warmup_train.jsonl` and are ignored by git. Each row contains `prompt`, `solution`, and `completion`. The `completion` is generated only by `src/warmup_completion.py`, which calls the exact solver and re-validates the final answer:
+
+```text
+<think>我会先构造一个只使用给定数字一次的表达式，并检查它等于目标值。</think>
+<answer>8/(3-(8/3))</answer>
+```
+
+The `<answer>` field must contain only a valid expression or `UNSOLVABLE`; no `=24`, Chinese math symbols, or explanatory text are allowed.
