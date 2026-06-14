@@ -5,7 +5,7 @@ import os
 
 
 MODEL_NAME = "Qwen/Qwen2.5-1.5B-Instruct"
-WARMUP_DATA_PATH = "data/warmup_train.jsonl"
+SFT_DATA_PATH = "data/rejection_sft_train.jsonl"
 OUTPUT_DIR = "./outputs/sft_model"
 
 NUM_TRAIN_EPOCHS = 2
@@ -20,9 +20,9 @@ LORA_ALPHA = 16
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="SFT warmup Qwen2.5-1.5B-Instruct before GRPO.")
+    parser = argparse.ArgumentParser(description="SFT train Qwen2.5-1.5B-Instruct on rejection-sampled data before GRPO.")
     parser.add_argument("--model-name", default=MODEL_NAME)
-    parser.add_argument("--train-data-path", default=WARMUP_DATA_PATH)
+    parser.add_argument("--train-data-path", default=SFT_DATA_PATH)
     parser.add_argument("--output-dir", default=OUTPUT_DIR)
     parser.add_argument("--checkpoint-dir", default="./outputs/sft_checkpoints")
     parser.add_argument("--run-name", default="")
@@ -122,7 +122,7 @@ def main():
     from peft import LoraConfig, get_peft_model
     from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
-    run_name = args.run_name or f"sft_warmup_lora{args.lora_rank}"
+    run_name = args.run_name or f"rejection_sft_lora{args.lora_rank}"
     run_dir = os.path.join(args.run_root, run_name)
     save_config(args, run_dir)
 
@@ -160,18 +160,18 @@ def main():
     )
     model = get_peft_model(model, lora_config)
 
-    print(f"4. Loading SFT warmup data: {args.train_data_path}")
+    print(f"4. Loading rejection-sampled SFT data: {args.train_data_path}")
     dataset = load_dataset("json", data_files=args.train_data_path, split="train")
     dataset = dataset.map(lambda example: render_text(tokenizer, example))
 
     print("5. Building SFT config...")
     training_args = build_sft_config(args)
 
-    print("6. Starting SFT warmup...")
+    print("6. Starting SFT training...")
     trainer = build_sft_trainer(tokenizer, model, training_args, dataset)
     trainer.train()
 
-    print(f"SFT warmup complete. Saving LoRA weights to {args.output_dir}")
+    print(f"SFT training complete. Saving LoRA weights to {args.output_dir}")
     trainer.save_model(args.output_dir)
     print(f"Run artifacts saved to {run_dir}")
 

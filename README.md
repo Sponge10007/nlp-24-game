@@ -166,43 +166,57 @@ python play_24.py 2 3 7 --target 17
 6. 定性分析：成功样例、数字偷换/格式错误/算错值/不可解胡编样例。
 7. 局限性：RL 训练不稳定、低显存下 `num_generations=2` 的限制、复杂搜索题仍依赖采样。
 
-## SFT 预热、拒绝采样与 GRPO 训练
+## DeepSeek API 拒绝采样、SFT 与 GRPO 训练
 
-如果直接运行 `python train.py`，就是从 base model 直接做 GRPO，可作为 zero-RL baseline。但当前实验中直接 GRPO 容易长期拿不到正确性奖励，因此更推荐使用“两阶段”流程：先用 SFT 稳定输出格式和解题约束，再从 SFT adapter 继续 GRPO。
+如果直接运行 `python train.py`，就是从 base model 直接做 GRPO，可作为 zero-RL baseline。但当前实验中直接 GRPO 容易长期拿不到正确性奖励，因此推荐主流程改为：先调用 DeepSeek API 做拒绝采样生成 SFT 数据，再进行 SFT 训练，最后从 SFT adapter 继续 GRPO。
 
 ### 新增脚本与模块
 
-- `generate_rejection_sft.py`：对每道题进行多次模型采样，并用裁判函数筛选可用于 SFT 的正确 completion。
-- `train_sft.py`：读取 SFT JSONL 数据，使用 4-bit + LoRA 做低显存 SFT 训练，默认输出到 `outputs/sft_model`。
-- `src/rejection_sampling.py`：拒绝采样的核心逻辑，包括候选 completion 校验、选择首个通过样本、构造 SFT 数据行。
-- `src/solver24.py`：精确 24 点求解器，使用 `Fraction` 搜索合法表达式。
-- `src/warmup_completion.py`：程序生成 verified completion，用于冷启动 baseline，也用于拒绝采样失败时的 fallback。
+- `generate_rejection_sft.py`：调用 DeepSeek API 对每道题多次采样，并用本地裁判函数筛选可用于 SFT 的正确 completion。
+- `train_sft.py`：读取 `data/rejection_sft_train.jsonl`，使用 4-bit + LoRA 做低显存 SFT 训练，默认输出到 `outputs/sft_model`。
+- `src/rejection_sampling.py`：拒绝采样核心逻辑，包括 DeepSeek 响应转 `<think>/<answer>`、候选 completion 校验、选择首个通过样本、构造 SFT 数据行。
 
-### 两种 SFT 数据来源
+程序生成 warmup 和 solver fallback 已移除。预热数据完全依赖 DeepSeek API 拒绝采样；如果某道题多次采样仍未通过裁判，该题会被跳过，不再用程序解兜底。
 
-推荐主流程使用拒绝采样数据：
+### API 配置
 
-- `data/rejection_sft_train.jsonl`：由 `generate_rejection_sft.py` 生成。模型会对每道题采样多次，只保留通过 `judge_answer` 裁判的 completion。
+DeepSeek API 使用 OpenAI-compatible 调用方式。运行前需要设置 API key：
 
-备用 baseline 使用程序生成预热数据：
+```bash
+export DEEPSEEK_API_KEY=你的_api_key
+```
 
-- `data/warmup_train.jsonl`：由 `src/solver24.py` 和 `src/warmup_completion.py` 生成。它不依赖模型采样，completion 短而稳定，适合作为冷启动对照实验。
+默认配置如下：
 
-这些 `data/*.jsonl` 文件都被 `.gitignore` 忽略，需要在本地生成。
+```text
+base_url: https://api.deepseek.com
+api_model: deepseek-reasoner
+api_key_env: DEEPSEEK_API_KEY
+```
+
+`deepseek-reasoner` 会返回 `reasoning_content` 和 `content`。脚本会把它们整理为 SFT completion：
+
+```text
+<think>reasoning_content</think>
+<answer>content</answer>
+```
+
+如果 `content` 已经包含 `<answer>...</answer>`，则直接作为候选 completion 使用。无论哪种情况，最终都会经过 `extract_answer` 和 `judge_answer` 校验。
 
 ### 拒绝采样机制
 
 拒绝采样流程如下：
 
-1. 对每道 24 点题目，让当前模型采样多次 completion。
-2. 使用 `extract_answer` 从 completion 中提取 `<answer>...</answer>`。
-3. 使用 `judge_answer` 校验答案是否满足要求：数字必须各用一次，字符只能包含合法数学符号，表达式值必须等于目标值；不可解样本必须诚实输出 `UNSOLVABLE`。
-4. 只保留第一个通过裁判的 completion，写入 SFT 数据。
-5. 默认情况下，如果某道题所有采样都失败，会回退到 `src/warmup_completion.py` 生成的 verified solver completion，保证 SFT 数据集仍然完整。
+1. 对每道 24 点题目调用 DeepSeek API 多次，最多 `--attempts-per-case` 次。
+2. 将 API 返回内容整理为 `<think>...</think>` 和 `<answer>...</answer>`。
+3. 使用 `extract_answer` 提取 `<answer>` 中的最终答案。
+4. 使用 `judge_answer` 校验数字使用、字符合法性、表达式值和不可解声明。
+5. 只保留第一个通过裁判的 completion，写入 SFT 数据。
+6. 如果所有采样都失败，跳过该题，并在 summary 中统计为 `rejected_all`。
 
-如果希望生成纯拒绝采样数据，只保留模型自己采样成功的样本，可以加 `--no-fallback-to-solver`。
+生成的 SFT 数据写入 `data/rejection_sft_train.jsonl`，该文件被 `.gitignore` 忽略，需要在本地生成。
 
-### 推荐训练流程：拒绝采样 SFT -> GRPO
+### 推荐训练流程：DeepSeek 拒绝采样 SFT -> GRPO
 
 第一步，准备基础数据：
 
@@ -210,13 +224,26 @@ python play_24.py 2 3 7 --target 17
 python data/prepare_data.py --with-countdown --countdown-size 200
 ```
 
-第二步，生成拒绝采样 SFT 数据：
+第二步，生成 DeepSeek 拒绝采样 SFT 数据：
 
 ```bash
 python generate_rejection_sft.py \
   --input-data-path data/train.jsonl \
   --output-data-path data/rejection_sft_train.jsonl \
-  --attempts-per-case 16
+  --api-model deepseek-reasoner \
+  --attempts-per-case 16 \
+  --max-tokens 2048
+```
+
+可选参数：
+
+```text
+--api-key-env DEEPSEEK_API_KEY      API key 所在环境变量
+--base-url https://api.deepseek.com DeepSeek API 地址
+--sleep-seconds 0.2                 每次 API 调用后的等待时间
+--temperature 0.6                   采样温度
+--top-p 0.95                        nucleus sampling 参数
+--limit N                           只处理前 N 条样本，便于小规模试跑
 ```
 
 第三步，执行 SFT 训练：
@@ -224,7 +251,7 @@ python generate_rejection_sft.py \
 ```bash
 python train_sft.py \
   --train-data-path data/rejection_sft_train.jsonl \
-  --run-name rejection_sft_lora8
+  --run-name deepseek_rejection_sft_lora8
 ```
 
 第四步，从 SFT adapter 继续 GRPO：
@@ -232,7 +259,7 @@ python train_sft.py \
 ```bash
 python train.py \
   --adapter-init-path outputs/sft_model \
-  --run-name sft_then_grpo_lora8_g2
+  --run-name deepseek_sft_then_grpo_lora8_g2
 ```
 
 第五步，评估最终 LoRA：
@@ -247,36 +274,23 @@ python evaluate.py \
   --summary-json outputs/eval_summary.json
 ```
 
-### 可选流程：程序生成预热数据 baseline
+### SFT 数据格式
 
-如果想先做一个不依赖模型采样的 SFT baseline，可以生成 verified warmup 数据：
+生成的每行 JSONL 保持如下结构：
 
-```bash
-python data/prepare_data.py --with-warmup --with-countdown --countdown-size 200
-python train_sft.py --train-data-path data/warmup_train.jsonl --run-name solver_warmup_lora8
+```json
+{
+  "target_nums": [3, 3, 8, 8],
+  "target_value": 24,
+  "solvable": true,
+  "prompt": ["..."],
+  "completion": "<think>...</think>\n<answer>8/(3-(8/3))</answer>",
+  "answer": "8/(3-(8/3))",
+  "solution": "8/(3-(8/3))",
+  "rejection_source": "deepseek_api",
+  "accepted_attempt": 3,
+  "judge_code": "correct"
+}
 ```
 
-`data/warmup_train.jsonl` 的每行包含 `prompt`、`solution` 和 `completion`。其中 `completion` 只能由 `src/warmup_completion.py` 生成，并会再次调用裁判函数验证。
-
-示例格式：
-
-```text
-<think>我会先构造一个只使用给定数字一次的表达式，并检查它等于目标值。</think>
-<answer>8/(3-(8/3))</answer>
-```
-
-`<answer>` 中只能包含最终表达式或 `UNSOLVABLE`，不能包含 `=24`、中文数学符号、解释文字或其他多余内容。
-
-### 可选流程：纯拒绝采样数据
-
-如果只想训练模型自己采样成功的 completion，不使用 solver fallback，可以运行：
-
-```bash
-python generate_rejection_sft.py \
-  --input-data-path data/train.jsonl \
-  --output-data-path data/rejection_sft_train.jsonl \
-  --attempts-per-case 16 \
-  --no-fallback-to-solver
-```
-
-这种设置下，采样失败的题目会被跳过，最终 SFT 数据量可能明显少于 `data/train.jsonl`。
+`<answer>` 中只能包含最终表达式或 `UNSOLVABLE`，不能包含 `=24`、中文数学符号、解释文字或其他多余内容。未通过这些约束的 API 输出会被拒绝。

@@ -1,6 +1,11 @@
 import unittest
 
-from src.rejection_sampling import build_sft_row, select_rejection_sample, validate_rejection_candidate
+from src.rejection_sampling import (
+    build_completion_from_deepseek_response,
+    build_sft_row,
+    select_rejection_sample,
+    validate_rejection_candidate,
+)
 
 
 class RejectionSamplingTest(unittest.TestCase):
@@ -39,7 +44,44 @@ class RejectionSamplingTest(unittest.TestCase):
 
         self.assertEqual(row["completion"], completion)
         self.assertEqual(row["solution"], "8/(3-(8/3))")
-        self.assertEqual(row["rejection_source"], "model_rejection")
+        self.assertEqual(row["rejection_source"], "deepseek_api")
+
+    def test_build_completion_from_deepseek_reasoning_and_content(self):
+        completion = build_completion_from_deepseek_response(
+            "try division",
+            "8/(3-(8/3))",
+        )
+
+        self.assertEqual(completion, "<think>try division</think>\n<answer>8/(3-(8/3))</answer>")
+        sample = validate_rejection_candidate(completion, [3, 3, 8, 8])
+        self.assertTrue(sample.accepted)
+
+    def test_build_completion_keeps_tagged_content(self):
+        completion = build_completion_from_deepseek_response(
+            "hidden reasoning",
+            "<think>visible</think>\n<answer>8/(3-(8/3))</answer>",
+        )
+
+        self.assertEqual(completion, "<think>visible</think>\n<answer>8/(3-(8/3))</answer>")
+
+    def test_deepseek_wrong_expression_is_rejected(self):
+        completion = build_completion_from_deepseek_response(
+            "bad arithmetic",
+            "1+2+3+4",
+        )
+
+        sample = validate_rejection_candidate(completion, [3, 3, 8, 8])
+        self.assertFalse(sample.accepted)
+
+    def test_deepseek_number_mismatch_is_rejected(self):
+        completion = build_completion_from_deepseek_response(
+            "uses extra number",
+            "8/(3-(8/4))",
+        )
+
+        sample = validate_rejection_candidate(completion, [3, 3, 8, 8])
+        self.assertFalse(sample.accepted)
+        self.assertEqual(sample.code, "number_mismatch")
 
 
 if __name__ == "__main__":

@@ -5,7 +5,6 @@ from typing import Any
 
 from src.game24 import CORRECT, UNSOLVABLE_CLAIM, extract_answer, has_r1_format, judge_answer
 from src.prompts import SYSTEM_PROMPT, get_prompt
-from src.warmup_completion import build_warmup_completion
 
 
 @dataclass(frozen=True)
@@ -24,6 +23,16 @@ def build_prompt(target_nums: list[int], target_value: int | float = 24) -> list
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": get_prompt(target_nums, target_value)},
     ]
+
+
+def build_completion_from_deepseek_response(reasoning_content: str | None, content: str | None) -> str:
+    content = (content or "").strip()
+    reasoning_content = (reasoning_content or "").strip()
+    if "<answer>" in content.lower() and "</answer>" in content.lower():
+        return content
+
+    think = reasoning_content or "模型未返回 reasoning_content。"
+    return f"<think>{think}</think>\n<answer>{content}</answer>"
 
 
 def validate_rejection_candidate(
@@ -48,7 +57,7 @@ def validate_rejection_candidate(
         code=judgment.code,
         value=judgment.value,
         attempt_index=None,
-        source="model_rejection",
+        source="deepseek_api",
     )
 
 
@@ -79,26 +88,6 @@ def select_rejection_sample(
                 source=sample.source,
             )
     return None
-
-
-def build_solver_fallback_sample(
-    target_nums: list[int],
-    *,
-    target_value: int | float = 24,
-    solvable: bool = True,
-) -> RejectionSample:
-    warmup = build_warmup_completion(target_nums, target_value=target_value, solvable=solvable)
-    answer = extract_answer(warmup.completion)
-    judgment = judge_answer(answer, target_nums, target_value=target_value, solvable=warmup.solvable)
-    return RejectionSample(
-        accepted=True,
-        completion=warmup.completion,
-        answer=answer,
-        code=judgment.code,
-        value=judgment.value,
-        attempt_index=None,
-        source="solver_fallback",
-    )
 
 
 def build_sft_row(case: dict[str, Any], sample: RejectionSample) -> dict[str, Any]:
