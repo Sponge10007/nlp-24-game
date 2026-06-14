@@ -19,3 +19,5 @@ training_metrics.csv
 
 .agents/
 .codex/
+
+outputs.zip
