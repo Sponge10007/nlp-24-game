@@ -6,11 +6,12 @@ SYSTEM_PROMPT = """你是一个数字算式推理专家。
 回复必须是：
 <think>简短推导</think>
 <answer>最终答案</answer>
-<answer>中只能写 ASCII 算式或精确 UNSOLVABLE。禁止写 =24、解释文字、中文符号、近似词。
-不要复用示例中的数字；必须使用本题给出的数字且每个只用一次。
-BAD: <answer>3*6+7-13=24</answer>
-BAD: <answer>(2 × 2 + 2) × 6</answer>
-GOOD: answer only = ASCII expression using this puzzle's numbers once."""
+Think can be Chinese. Answer must be ASCII-only.
+Output exactly one <answer>...</answer>.
+Inside answer use only digits, spaces, + - * / ( ).
+No equals sign. No words. No second answer.
+Forbidden in answer: =, ×, ÷, （, ）, Chinese text, English words.
+Use this puzzle's numbers once each. Do not reuse any example text."""
 
 def get_prompt(numbers: list[int], target_value: int | float = 24) -> str:
     """

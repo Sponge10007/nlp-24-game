@@ -51,11 +51,16 @@ METRICS_COLUMNS = [
     "legal_expr_wrong_value_count",
     "bare_target_count",
     "copied_prompt_example_count",
+    "fullwidth_paren_count",
+    "multiple_answer_count",
 ]
 
 UNICODE_OPERATOR_RE = re.compile(r"[×✕✖÷]")
+FULLWIDTH_PAREN_RE = re.compile(r"[（）]")
 ANSWER_TEXT_RE = re.compile(r"[A-Za-z\u4e00-\u9fff]")
+ANSWER_BLOCK_RE = re.compile(r"<answer>.*?</answer>", re.DOTALL | re.IGNORECASE)
 COPIED_PROMPT_EXAMPLE = "8/(3-8/3)"
+STRONG_PROTOCOL_PENALTY = -1.2
 
 
 def protocol_issue_counts(answer: str, target_value: int | float = 24) -> Counter[str]:
@@ -65,12 +70,23 @@ def protocol_issue_counts(answer: str, target_value: int | float = 24) -> Counte
         counts["equal_sign_count"] += 1
     if UNICODE_OPERATOR_RE.search(answer):
         counts["unicode_operator_count"] += 1
+    if FULLWIDTH_PAREN_RE.search(answer):
+        counts["fullwidth_paren_count"] += 1
     if ANSWER_TEXT_RE.search(answer) and stripped_answer.upper() != "UNSOLVABLE":
         counts["answer_text_count"] += 1
     if stripped_answer == str(target_value) or stripped_answer == str(float(target_value)):
         counts["bare_target_count"] += 1
     if re.sub(r"\s+", "", answer) == COPIED_PROMPT_EXAMPLE:
         counts["copied_prompt_example_count"] += 1
+    return counts
+
+
+def completion_issue_counts(completion: Any) -> Counter[str]:
+    text = completion_to_text(completion)
+    answer_blocks = ANSWER_BLOCK_RE.findall(text)
+    counts: Counter[str] = Counter()
+    if len(answer_blocks) > 1:
+        counts["multiple_answer_count"] += 1
     return counts
 
 
@@ -85,10 +101,13 @@ def reward_for_judgment(code: str, value: float | None, answer: str, target_valu
         return -0.8
     if code == ILLEGAL_CHARACTER:
         issues = protocol_issue_counts(answer)
-        if issues["answer_text_count"]:
-            return -0.8
-        if issues["equal_sign_count"] or issues["unicode_operator_count"]:
-            return -0.7
+        if (
+            issues["equal_sign_count"]
+            or issues["unicode_operator_count"]
+            or issues["fullwidth_paren_count"]
+            or issues["answer_text_count"]
+        ):
+            return STRONG_PROTOCOL_PENALTY
         return -0.6
     if code == NUMBER_MISMATCH:
         issues = protocol_issue_counts(answer, target_value)
@@ -176,12 +195,17 @@ def correctness_reward(completions, target_nums, solvable=None, target_value=Non
         judgments.append(judgment)
         code_counts[judgment.code] += 1
         protocol_counts.update(protocol_issue_counts(ans, tgt))
+        completion_counts = completion_issue_counts(comp)
+        protocol_counts.update(completion_counts)
         if judgment.code == WRONG_VALUE and judgment.value is not None:
             protocol_counts["legal_expr_wrong_value_count"] += 1
         if has_r1_format(comp):
             format_count += 1
 
-        rewards.append(reward_for_judgment(judgment.code, judgment.value, ans, tgt))
+        reward = reward_for_judgment(judgment.code, judgment.value, ans, tgt)
+        if completion_counts["multiple_answer_count"]:
+            reward = min(reward, STRONG_PROTOCOL_PENALTY)
+        rewards.append(reward)
 
     correct_count = code_counts[CORRECT] + code_counts[UNSOLVABLE_CLAIM]
     _history_correct.append(correct_count)
@@ -221,6 +245,8 @@ def correctness_reward(completions, target_nums, solvable=None, target_value=Non
         "legal_expr_wrong_value_count": protocol_counts["legal_expr_wrong_value_count"],
         "bare_target_count": protocol_counts["bare_target_count"],
         "copied_prompt_example_count": protocol_counts["copied_prompt_example_count"],
+        "fullwidth_paren_count": protocol_counts["fullwidth_paren_count"],
+        "multiple_answer_count": protocol_counts["multiple_answer_count"],
     }
     _csv_buffer.append(",".join(str(row[col]) for col in METRICS_COLUMNS) + "\n")
 

@@ -1,7 +1,7 @@
 import unittest
 
 from src.game24 import ILLEGAL_CHARACTER, NUMBER_MISMATCH, WRONG_VALUE, judge_answer
-from src.rewards import protocol_issue_counts, reward_for_judgment
+from src.rewards import completion_issue_counts, correctness_reward, protocol_issue_counts, reward_for_judgment
 
 
 class RewardProtocolTest(unittest.TestCase):
@@ -12,7 +12,7 @@ class RewardProtocolTest(unittest.TestCase):
 
         self.assertEqual(judgment.code, ILLEGAL_CHARACTER)
         self.assertEqual(issues["equal_sign_count"], 1)
-        self.assertLess(reward_for_judgment(judgment.code, judgment.value, answer), -0.5)
+        self.assertEqual(reward_for_judgment(judgment.code, judgment.value, answer), -1.2)
 
     def test_unicode_operator_protocol_issue(self):
         answer = "(2 × 2 + 2) × 6"
@@ -21,7 +21,23 @@ class RewardProtocolTest(unittest.TestCase):
 
         self.assertEqual(judgment.code, ILLEGAL_CHARACTER)
         self.assertEqual(issues["unicode_operator_count"], 1)
-        self.assertLess(reward_for_judgment(judgment.code, judgment.value, answer), -0.5)
+        self.assertEqual(reward_for_judgment(judgment.code, judgment.value, answer), -1.2)
+
+    def test_fullwidth_paren_protocol_issue(self):
+        answer = "（2+2）"
+        judgment = judge_answer(answer, [2, 2])
+        issues = protocol_issue_counts(answer)
+
+        self.assertEqual(judgment.code, ILLEGAL_CHARACTER)
+        self.assertEqual(issues["fullwidth_paren_count"], 1)
+        self.assertEqual(reward_for_judgment(judgment.code, judgment.value, answer), -1.2)
+
+    def test_multiple_answer_protocol_issue(self):
+        completion = "<think>x</think><answer>1+2</answer><answer>3+4</answer>"
+        issues = completion_issue_counts(completion)
+
+        self.assertEqual(issues["multiple_answer_count"], 1)
+        self.assertEqual(correctness_reward([completion], [[1, 2, 3, 4]])[0], -1.2)
 
     def test_number_mismatch_still_number_mismatch(self):
         answer = "4*6/(1*6)+1"

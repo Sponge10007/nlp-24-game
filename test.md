@@ -138,3 +138,13 @@
 - 新增指标：`bare_target_count`、`copied_prompt_example_count`。
 - 新增/更新测试：覆盖复制 `8/(3-8/3)`、裸 `24`、加重 number mismatch、合法但算错仍保留小正奖励。
 - 下一轮建议先跑 `python train.py --run-name no_example_leak_lora8_g2`；若 number mismatch 明显下降，再跑 `--num-generations 4` 对比。
+
+# 2026-06-14 强化单一 ASCII answer 约束
+
+- 改动文件：`src/prompts.py`、`src/rewards.py`、`tests/test_rewards.py`、`training_failure_analysis.md`。
+- 问题：`no_example_leak_lora8_g2` 到 step 500 时模板背诵已消失，但最近 100 step 仍有大量 `=`, `×/÷`, 全角括号和多个 `<answer>`；准确率仍接近 0。
+- Prompt 改动：改为更硬的英文协议，明确 `<think>` 可中文，但 `<answer>` 必须 ASCII-only，且只能输出一个 `<answer>`。
+- Reward 改动：对等号、Unicode 运算符、全角括号、answer 文本给 `-1.2` 强惩罚；多个 `<answer>` 也给 `-1.2`。
+- 新增指标：`fullwidth_paren_count`、`multiple_answer_count`。
+- 新增测试：覆盖等号强惩罚、Unicode 强惩罚、全角括号、多 answer、合法但算错保留小正奖励。
+- 下一轮建议 run name：`strict_ascii_answer_lora8_g2`，到 step 300-500 检查协议错误是否下降。

@@ -214,3 +214,20 @@
 - 加重 `number_mismatch` 惩罚。
 - 单独统计 `bare_target_count` 和 `copied_prompt_example_count`。
 - 先跑 `no_example_leak_lora8_g2`，确认模板背诵和裸目标值输出下降后，再考虑 `num_generations=4`。
+
+## 9. no_example_leak_lora8_g2 中期结论
+
+`no_example_leak_lora8_g2` 跑到约 step 500 时，模板背诵问题已经明显修复，但训练仍卡在 answer 协议错误：
+
+- `copied_prompt_example_count=0`，说明 `8/(3-8/3)` 泄漏已经压住。
+- 最近 100 step 的 `format_rate` 约 `90%`。
+- 最近 100 step 的 `batch_accuracy` 约 `0.125%`。
+- 最近 100 step 中 `illegal_character_count=644`，`equal_sign_count=511`，`unicode_operator_count=335`。
+- `number_mismatch_count` 明显下降，但 `=24`、`×/÷`、全角括号和多个 `<answer>` 成为主要问题。
+
+因此后续策略改为进一步强化“单一 ASCII answer”：
+
+- prompt 中用更硬的英文协议要求 exactly one `<answer>`。
+- `<answer>` 内只允许 ASCII 数字、空格和 `+ - * / ( )`。
+- reward 中对等号、Unicode 运算符、全角括号、文本 answer、多 answer 给强惩罚。
+- 新增 `fullwidth_paren_count` 和 `multiple_answer_count`，下一轮 `strict_ascii_answer_lora8_g2` 重点观察这些指标。
