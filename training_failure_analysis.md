@@ -269,3 +269,102 @@
 - 对裸目标值、单数字答案、拼接/题外大数字给更强惩罚。
 - 保留数字完全匹配但算错的 `0.1` 小正奖励，鼓励模型先进入可裁判表达式阶段。
 - 下一轮 run 建议为 `number_usage_lora8_g2`；只有当数字使用错误明显下降后，再跑 `number_usage_lora8_g4 --num-generations 4` 做对比。
+
+## 11. number_usage_lora8_g2 后的策略调整
+
+`number_usage_lora8_g2` 完整跑到 1740 step 后，相比 `strict_ascii_answer_lora8_g2` 有小幅改善，但仍不是成功训练：
+
+| 指标 | strict_ascii 最后 100 step | number_usage 最后 100 step |
+| --- | ---: | ---: |
+| `batch_accuracy` | 0.625% | 1.125% |
+| `correct_count` | 5 | 9 |
+| `format_rate` | 93.25% | 91.625% |
+| `number_mismatch_count` | 358 | 325 |
+| `wrong_value_count` | 272 | 306 |
+| `illegal_character_count` | 130 | 110 |
+| `bare_target_count` | 38 | 28 |
+
+全 run 中，`number_usage_lora8_g2` 的总 correct 从 100 增至 119，`number_mismatch` 和 `illegal_character` 都下降，但 `wrong_value` 上升到 4200。这说明模型更常输出可裁判且数字匹配的表达式，但算术搜索仍不稳定。
+
+因此下一阶段不再继续主要加重协议惩罚，而改为参考解 SFT warmup：
+
+- 使用 `nlile/24-game` 原始 `solutions` 字段提供明确的 24 点解法模式。
+- 只保留 `data/train.jsonl` 中的 1162 个训练组合，避免 hard/low 测试泄漏。
+- 将 `×` 等符号规范化为 ASCII，并用当前严格裁判验证。
+- 已生成 `data/sft_train.jsonl`：2655 条 SFT 样本，覆盖 1162 个训练组合。
+
+后续实验建议顺序：
+
+1. 跑 `python train_sft.py`，得到 `outputs/models/sft_ref_lora8`。
+2. 评估 SFT adapter 在 hard、low solved-rate、unsolvable 上的 first@1/pass@4。
+3. 从 SFT adapter 接续 GRPO：`python train.py --run-name sft_then_grpo_lora8_g2 --init-adapter-path outputs/models/sft_ref_lora8 --output-dir outputs/models/sft_then_grpo_lora8_g2`。
+4. 如果 SFT+GRPO g2 明显优于当前 `number_usage_lora8_g2`，再跑 g4 做对比。
+
+## 12. SFT+GRPO 测试结论
+
+`sft_then_grpo_lora8_g2` 已完整跑到 1740 step，并保存到 `outputs/models/sft_then_grpo_lora8_g2`。这轮实验的主要结论是：SFT warmup 明显改善了格式和可裁判性，但 solved rate 仍然很低，模型主要卡在算术搜索。
+
+训练内最后 100 step 指标如下：
+
+| 指标 | 数值 |
+| --- | ---: |
+| `batch_accuracy` | 1.5% |
+| `format_rate` | 100.0% |
+| `correct_count` | 12 |
+| `number_mismatch_count` | 201 |
+| `wrong_value_count` | 561 |
+| `legal_expr_wrong_value_count` | 561 |
+| `illegal_character_count` | 25 |
+| `missing_answer_count` | 0 |
+| `bare_target_count` | 0 |
+| `single_number_answer_count` | 0 |
+
+相比 `number_usage_lora8_g2` 的全 run 结果，SFT+GRPO 有明确的协议改进：
+
+| 指标 | `number_usage_lora8_g2` | `sft_then_grpo_lora8_g2` |
+| --- | ---: | ---: |
+| 总 correct | 119 | 253 |
+| 最高 `smoothed_accuracy` | 1.88% | 3.12% |
+| 最终 `smoothed_accuracy` | 1.12% | 1.50% |
+| 总 `number_mismatch_count` | 5986 | 3696 |
+| 总 `illegal_character_count` | 2583 | 382 |
+| 总 `missing_answer_count` | 989 | 4 |
+| 总 `bare_target_count` | 887 | 32 |
+| 总 `wrong_value_count` | 4200 | 9546 |
+
+`wrong_value_count` 大幅上升不是简单退化，而是说明模型更常产出格式合法、数字也更接近要求的表达式；但是多数表达式没有算到 24。典型错误包括：
+
+```text
+nums=[4, 5, 6, 10]
+<answer>(10-6)*4+5</answer>
+value=21
+
+nums=[1, 2, 4, 7]
+<answer>(7-1)*2*4</answer>
+value=48
+```
+
+正式测试集结果如下：
+
+| Split | first@1 | pass@4 | 主要错误 |
+| --- | ---: | ---: | --- |
+| `test_hard_900_1000` | 1/100 | 6/100 | `wrong_value` |
+| `test_low_solved_rate` | 0/100 | 0/100 | `wrong_value` |
+| `unsolvable_test` | 0/100 | 0/100 | `fabricated_unsolvable` |
+
+不可解测试集完全失败：100 条不可解题都输出了表达式，全部被判为 `fabricated_unsolvable`。例如：
+
+```text
+nums=[3, 3, 3, 13]
+<answer>(3+3)*13-3</answer>
+```
+
+因此报告中建议采用如下表述：
+
+> SFT+GRPO 显著改善了输出格式和可裁判性，使模型更稳定地产生 `<answer>` 表达式，并大幅降低非法字符、缺失答案和裸目标值问题。但 held-out 测试 solved rate 仍然很低，主要错误从输出协议错误转为算术搜索错误；模型尚未稳定学会求解 24 点。不可解拒答能力也没有形成，所有不可解样本均被胡编为表达式。
+
+不建议写成：
+
+> SFT+GRPO 显著提升了 24 点求解能力。
+
+因为当前 first@1/pass@4 测试结果不支持这个结论。更准确的结论是：当前模型已从“不可裁判输出”推进到“可裁判但算术不可靠”的阶段，后续应考虑 verifier-guided decoding、更多候选采样、显式搜索或不可解拒答训练。

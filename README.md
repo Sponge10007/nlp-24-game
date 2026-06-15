@@ -23,6 +23,7 @@ nlp-24-game/
 │   └── test_game24.py           # 裁判单元测试
 ├── train.py                     # GRPO 训练入口
 ├── evaluate.py                  # base/LoRA 评估，支持 pass@k 和结果导出
+├── train_sft.py                 # 使用 nlile 参考解做 SFT warmup
 ├── play_24.py                   # 交互式演示脚本
 ├── plot_curve.py                # 训练曲线与错误类型图
 ├── rewards_inform.md            # 奖励函数说明
@@ -73,10 +74,39 @@ python data/prepare_data.py --with-countdown --countdown-size 200
 
 ## 训练
 
+可选：先用 `nlile/24-game` 参考解生成 SFT warmup 数据：
+
+```bash
+python data/prepare_sft_data.py
+```
+
+默认生成 `data/sft_train.jsonl`。该文件只使用 `data/train.jsonl` 中的训练组合，并会把参考解中的 `×` 等符号规范化为严格裁判接受的 ASCII 表达式。
+
+运行 SFT warmup：
+
+```bash
+python train_sft.py
+```
+
+SFT LoRA 默认保存到：
+
+```text
+outputs/models/sft_ref_lora8
+```
+
 低显存默认配置：
 
 ```bash
 python train.py
+```
+
+从 SFT adapter 接续 GRPO：
+
+```bash
+python train.py \
+  --run-name sft_then_grpo_lora8_g2 \
+  --init-adapter-path outputs/models/sft_ref_lora8 \
+  --output-dir outputs/models/sft_then_grpo_lora8_g2
 ```
 
 常用可调参数：

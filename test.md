@@ -159,3 +159,55 @@
 - 新增指标：`single_number_answer_count`、`too_few_numbers_count`、`too_many_numbers_count`、`out_of_puzzle_number_count`、`wrong_multiplicity_count`、`large_or_concatenated_number_count`。
 - 惩罚策略：裸目标值、单数字答案、拼接/题外大数字给 `-1.1`；漏用、多用、重复次数错误给 `-0.95`；数字匹配但算错仍保留 `0.1`。
 - 下一轮建议先跑 `python train.py --run-name number_usage_lora8_g2`，到 step 300-500 检查数字使用指标；只有明显改善后再跑 `python train.py --run-name number_usage_lora8_g4 --num-generations 4`。
+
+# 2026-06-15 参考解 SFT warmup 准备
+
+- 新增文件：`data/prepare_sft_data.py`、`train_sft.py`、`tests/test_prepare_sft_data.py`。
+- 改动文件：`train.py`、`README.md`、`training_failure_analysis.md`。
+- 背景：`number_usage_lora8_g2` 完整 run 后准确率仍约 `1%`，但错误已更多转为数字匹配后算错，说明继续只调协议 reward 收益有限。
+- 数据处理：从原始 `nlile/24-game` 的 `solutions` 字段生成 `data/sft_train.jsonl`，只保留当前 `data/train.jsonl` 的训练组合，避免使用 ToT hard/low 测试题。
+- 解法规范化：将参考解中的 `×`、`÷`、全角括号等转为 ASCII，并用 `judge_answer()` 严格验证。
+- 当前生成结果：`data/sft_train.jsonl` 共 2655 条 SFT 样本，覆盖 1162 个训练组合；全部 answer 可被严格裁判判为 `correct`。
+- SFT 训练入口：`python train_sft.py`，默认输出 LoRA 到 `outputs/models/sft_ref_lora8`，不覆盖 `outputs/final_model`。
+- GRPO 接续：`train.py` 新增 `--init-adapter-path`，可从 SFT adapter 继续训练：
+
+```bash
+python train.py \
+  --run-name sft_then_grpo_lora8_g2 \
+  --init-adapter-path outputs/models/sft_ref_lora8 \
+  --output-dir outputs/models/sft_then_grpo_lora8_g2
+```
+
+- 验证命令：
+
+```bash
+./venv/bin/python -m unittest tests/test_game24.py tests/test_prepare_data.py tests/test_prepare_sft_data.py tests/test_rewards.py
+./venv/bin/python -m py_compile train.py train_sft.py data/prepare_sft_data.py
+```
+
+- 下一步实验顺序：先跑 SFT，再评估 SFT adapter；若 solvable 测试集 first@1 有改善，再跑 SFT+GRPO g2。暂不优先跑 g4。
+
+# 2026-06-15 SFT+GRPO 结果分析
+
+- 实验对象：`sft_then_grpo_lora8_g2`。
+- 模型路径：`outputs/models/sft_then_grpo_lora8_g2`。
+- 日志路径：`outputs/runs/sft_then_grpo_lora8_g2/`。
+- 评估文件：
+  - `outputs/eval_sft_then_grpo_lora8_g2_summary.json`
+  - `outputs/eval_sft_then_grpo_lora8_g2_pass4_summary.json`
+- 训练内最后 100 step：`format_rate=100%`，`batch_accuracy=1.5%`，`correct_count=12/800`，`number_mismatch_count=201`，`wrong_value_count=561`，`illegal_character_count=25`，`missing_answer_count=0`。
+- 相比 `number_usage_lora8_g2`，SFT+GRPO 明显改善了输出协议：总 `illegal_character_count` 从 2583 降到 382，`missing_answer_count` 从 989 降到 4，`bare_target_count` 从 887 降到 32。
+- 但总 `wrong_value_count` 从 4200 升到 9546，说明模型更多产出可裁判表达式，但多数没有算到 24。
+- first@1 评估：
+  - hard split：`1/100`。
+  - low solved-rate split：`0/100`。
+  - unsolvable split：`0/100`。
+- pass@4 评估：
+  - hard split：`6/100`。
+  - low solved-rate split：`0/100`。
+  - unsolvable split：`0/100`。
+- 主要错误：
+  - solvable 测试题主要是 `wrong_value`，例如 `[4,5,6,10] -> (10-6)*4+5 = 21`、`[1,2,4,7] -> (7-1)*2*4 = 48`。
+  - 不可解测试题全部是 `fabricated_unsolvable`，例如 `[3,3,3,13] -> (3+3)*13-3`。
+- 报告建议：可以写“SFT+GRPO 显著改善格式与可验证性”，不应写“24 点求解能力显著提升”。更准确的结论是：模型已从输出协议错误推进到算术搜索错误，但最终 solved rate 仍不足。
+- 后续方向：另行规划 verifier-guided decoding、pass@k 扩展、显式搜索或不可解拒答训练。

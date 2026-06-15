@@ -5,7 +5,7 @@ import os
 
 import torch
 from datasets import load_dataset
-from peft import LoraConfig, get_peft_model
+from peft import LoraConfig, PeftModel, get_peft_model
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import GRPOConfig, GRPOTrainer
 
@@ -47,6 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train-data-path", default=TRAIN_DATA_PATH)
     parser.add_argument("--output-dir", default=OUTPUT_DIR)
     parser.add_argument("--checkpoint-dir", default="./outputs/checkpoints")
+    parser.add_argument("--init-adapter-path", default="", help="Optional LoRA adapter to continue training from.")
     parser.add_argument("--run-name", default="")
     parser.add_argument("--run-root", default="./outputs/runs")
 
@@ -145,15 +146,19 @@ def main():
         model_kwargs["torch_dtype"] = torch_dtype
     model = AutoModelForCausalLM.from_pretrained(args.model_name, **model_kwargs)
 
-    print(f"3. Injecting LoRA adapter (rank={args.lora_rank}, alpha={args.lora_alpha})...")
-    lora_config = LoraConfig(
-        r=args.lora_rank,
-        lora_alpha=args.lora_alpha,
-        target_modules=["q_proj", "v_proj", "k_proj", "o_proj"],
-        task_type="CAUSAL_LM",
-        bias="none",
-    )
-    model = get_peft_model(model, lora_config)
+    if args.init_adapter_path:
+        print(f"3. Loading trainable LoRA adapter: {args.init_adapter_path}")
+        model = PeftModel.from_pretrained(model, args.init_adapter_path, is_trainable=True)
+    else:
+        print(f"3. Injecting LoRA adapter (rank={args.lora_rank}, alpha={args.lora_alpha})...")
+        lora_config = LoraConfig(
+            r=args.lora_rank,
+            lora_alpha=args.lora_alpha,
+            target_modules=["q_proj", "v_proj", "k_proj", "o_proj"],
+            task_type="CAUSAL_LM",
+            bias="none",
+        )
+        model = get_peft_model(model, lora_config)
 
     print(f"4. Loading train data: {args.train_data_path}")
     dataset = load_dataset("json", data_files=args.train_data_path, split="train")
