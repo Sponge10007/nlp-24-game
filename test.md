@@ -148,3 +148,14 @@
 - 新增指标：`fullwidth_paren_count`、`multiple_answer_count`。
 - 新增测试：覆盖等号强惩罚、Unicode 强惩罚、全角括号、多 answer、合法但算错保留小正奖励。
 - 下一轮建议 run name：`strict_ascii_answer_lora8_g2`，到 step 300-500 检查协议错误是否下降。
+
+# 2026-06-15 强化数字使用约束
+
+- 改动文件：`src/prompts.py`、`src/rewards.py`、`tests/test_rewards.py`、`training_failure_analysis.md`。
+- 问题：`strict_ascii_answer_lora8_g2` 完整跑完后，格式率已提升到约 `93.25%`，`copied_prompt_example_count=0`，`multiple_answer_count=0`，但最后 100 step 仍有 `number_mismatch_count=358`、`wrong_value_count=272`，正确样本只有 5 个。
+- 结论：当前主要瓶颈已经从 answer 协议错误转为数字使用约束和算术搜索；模型仍会输出裸 `24/12/6`、拼接数字如 `69/46`、漏用/多用给定数字。
+- Prompt 改动：保留严格 ASCII answer 规则，新增“每个给定数字必须作为独立 token 使用一次”“不能把 6 和 9 拼成 69”“不能只输出目标值或中间数”。
+- Reward 改动：保持 `judge_answer()` 严格不变，只细分 `number_mismatch` 的训练诊断和惩罚。
+- 新增指标：`single_number_answer_count`、`too_few_numbers_count`、`too_many_numbers_count`、`out_of_puzzle_number_count`、`wrong_multiplicity_count`、`large_or_concatenated_number_count`。
+- 惩罚策略：裸目标值、单数字答案、拼接/题外大数字给 `-1.1`；漏用、多用、重复次数错误给 `-0.95`；数字匹配但算错仍保留 `0.1`。
+- 下一轮建议先跑 `python train.py --run-name number_usage_lora8_g2`，到 step 300-500 检查数字使用指标；只有明显改善后再跑 `python train.py --run-name number_usage_lora8_g4 --num-generations 4`。

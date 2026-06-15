@@ -11,7 +11,10 @@ Output exactly one <answer>...</answer>.
 Inside answer use only digits, spaces, + - * / ( ).
 No equals sign. No words. No second answer.
 Forbidden in answer: =, ×, ÷, （, ）, Chinese text, English words.
-Use this puzzle's numbers once each. Do not reuse any example text."""
+Use this puzzle's numbers once each. Do not reuse any example text.
+Use each listed number as a separate token exactly once.
+Do not join digits into new numbers, e.g. never turn 6 and 9 into 69.
+Do not answer with only the target value or one intermediate number."""
 
 def get_prompt(numbers: list[int], target_value: int | float = 24) -> str:
     """

@@ -231,3 +231,41 @@
 - `<answer>` 内只允许 ASCII 数字、空格和 `+ - * / ( )`。
 - reward 中对等号、Unicode 运算符、全角括号、文本 answer、多 answer 给强惩罚。
 - 新增 `fullwidth_paren_count` 和 `multiple_answer_count`，下一轮 `strict_ascii_answer_lora8_g2` 重点观察这些指标。
+
+## 10. strict_ascii_answer_lora8_g2 完整 run 结论
+
+`strict_ascii_answer_lora8_g2` 是目前协议修复效果最好的一轮。完整 run 共 1740 个 reward step，最后 100 step 的均值和累计错误如下：
+
+| 指标 | 数值 |
+| --- | ---: |
+| 平均 batch accuracy | 0.625% |
+| 平均 smoothed accuracy | 0.9315% |
+| 平均 format rate | 93.25% |
+| 平均 correctness reward | -0.5448 |
+| `correct_count` | 5 |
+| `number_mismatch_count` | 358 |
+| `wrong_value_count` | 272 |
+| `legal_expr_wrong_value_count` | 272 |
+| `illegal_character_count` | 130 |
+| `equal_sign_count` | 98 |
+| `fullwidth_paren_count` | 25 |
+| `unicode_operator_count` | 13 |
+| `bare_target_count` | 38 |
+| `multiple_answer_count` | 0 |
+| `copied_prompt_example_count` | 0 |
+
+这说明 strict ASCII prompt/reward 对格式协议是有效的：模板背诵、多 answer、Unicode 运算符等问题明显下降。但准确率仍很低，主要瓶颈转为数字使用约束和算术搜索。
+
+典型失败包括：
+
+- 裸目标值或中间数：`<answer>24</answer>`、`<answer>12</answer>`、`<answer>6</answer>`。
+- 拼接数字：例如题目 `nums=[6,9,9,12]` 时输出 `<answer>69 - 12 / 9 * 9</answer>`。
+- 漏用或多用数字：例如题目 `nums=[4,11,12,13]` 时输出 `<answer>4 + 11 + 11 - 12 - 13</answer>`。
+- 数字匹配但算错：例如 `<answer>12 * (7 - 2) + 10</answer>` 使用了给定数字但结果为 70。
+
+因此下一轮不建议直接增加 `num_generations=4`。更合适的方向是先细分并强化 `number_mismatch` 的 reward shaping：
+
+- 新增单数字答案、漏用、多用、题外数字、重复次数错误、拼接大数字等诊断指标。
+- 对裸目标值、单数字答案、拼接/题外大数字给更强惩罚。
+- 保留数字完全匹配但算错的 `0.1` 小正奖励，鼓励模型先进入可裁判表达式阶段。
+- 下一轮 run 建议为 `number_usage_lora8_g2`；只有当数字使用错误明显下降后，再跑 `number_usage_lora8_g4 --num-generations 4` 做对比。

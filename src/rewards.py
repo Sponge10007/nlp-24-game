@@ -50,6 +50,12 @@ METRICS_COLUMNS = [
     "answer_text_count",
     "legal_expr_wrong_value_count",
     "bare_target_count",
+    "single_number_answer_count",
+    "too_few_numbers_count",
+    "too_many_numbers_count",
+    "out_of_puzzle_number_count",
+    "wrong_multiplicity_count",
+    "large_or_concatenated_number_count",
     "copied_prompt_example_count",
     "fullwidth_paren_count",
     "multiple_answer_count",
@@ -59,8 +65,12 @@ UNICODE_OPERATOR_RE = re.compile(r"[×✕✖÷]")
 FULLWIDTH_PAREN_RE = re.compile(r"[（）]")
 ANSWER_TEXT_RE = re.compile(r"[A-Za-z\u4e00-\u9fff]")
 ANSWER_BLOCK_RE = re.compile(r"<answer>.*?</answer>", re.DOTALL | re.IGNORECASE)
+NUMBER_RE = re.compile(r"\d+")
+SINGLE_NUMBER_EXPR_RE = re.compile(r"^\s*\(*\s*\d+\s*\)*\s*$")
 COPIED_PROMPT_EXAMPLE = "8/(3-8/3)"
 STRONG_PROTOCOL_PENALTY = -1.2
+STRONG_NUMBER_USAGE_PENALTY = -1.1
+NUMBER_USAGE_MISMATCH_PENALTY = -0.95
 
 
 def protocol_issue_counts(answer: str, target_value: int | float = 24) -> Counter[str]:
@@ -81,6 +91,46 @@ def protocol_issue_counts(answer: str, target_value: int | float = 24) -> Counte
     return counts
 
 
+def _numbers_in_answer(answer: str) -> list[int]:
+    return [int(n) for n in NUMBER_RE.findall(answer)]
+
+
+def number_usage_issue_counts(
+    answer: str,
+    target_nums: list[int],
+    target_value: int | float = 24,
+) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    used_nums = _numbers_in_answer(answer)
+    if not used_nums:
+        return counts
+
+    if SINGLE_NUMBER_EXPR_RE.fullmatch(answer):
+        counts["single_number_answer_count"] += 1
+
+    if len(used_nums) < len(target_nums):
+        counts["too_few_numbers_count"] += 1
+    elif len(used_nums) > len(target_nums):
+        counts["too_many_numbers_count"] += 1
+
+    used_counter = Counter(used_nums)
+    target_counter = Counter(target_nums)
+    if any(num not in target_counter for num in used_counter):
+        counts["out_of_puzzle_number_count"] += 1
+    if used_counter != target_counter:
+        counts["wrong_multiplicity_count"] += 1
+
+    max_target_num = max((abs(num) for num in target_nums), default=0)
+    target_value_int = int(target_value) if float(target_value).is_integer() else None
+    for num in used_counter:
+        is_bare_target = target_value_int is not None and num == target_value_int and SINGLE_NUMBER_EXPR_RE.fullmatch(answer)
+        if num not in target_counter and abs(num) > max_target_num and not is_bare_target:
+            counts["large_or_concatenated_number_count"] += 1
+            break
+
+    return counts
+
+
 def completion_issue_counts(completion: Any) -> Counter[str]:
     text = completion_to_text(completion)
     answer_blocks = ANSWER_BLOCK_RE.findall(text)
@@ -90,7 +140,14 @@ def completion_issue_counts(completion: Any) -> Counter[str]:
     return counts
 
 
-def reward_for_judgment(code: str, value: float | None, answer: str, target_value: int | float = 24) -> float:
+def reward_for_judgment(
+    code: str,
+    value: float | None,
+    answer: str,
+    target_value: int | float = 24,
+    *,
+    target_nums: list[int] | None = None,
+) -> float:
     if code in {CORRECT, UNSOLVABLE_CLAIM}:
         return 2.0
     if code == FABRICATED_UNSOLVABLE:
@@ -112,7 +169,18 @@ def reward_for_judgment(code: str, value: float | None, answer: str, target_valu
     if code == NUMBER_MISMATCH:
         issues = protocol_issue_counts(answer, target_value)
         if issues["bare_target_count"] or issues["copied_prompt_example_count"]:
-            return -0.9
+            return STRONG_NUMBER_USAGE_PENALTY
+        if target_nums is not None:
+            usage_issues = number_usage_issue_counts(answer, target_nums, target_value)
+            if usage_issues["single_number_answer_count"] or usage_issues["large_or_concatenated_number_count"]:
+                return STRONG_NUMBER_USAGE_PENALTY
+            if (
+                usage_issues["too_few_numbers_count"]
+                or usage_issues["too_many_numbers_count"]
+                or usage_issues["out_of_puzzle_number_count"]
+                or usage_issues["wrong_multiplicity_count"]
+            ):
+                return NUMBER_USAGE_MISMATCH_PENALTY
         return -0.8
     if code == WRONG_VALUE:
         return 0.1 if value is not None else -0.3
@@ -197,12 +265,14 @@ def correctness_reward(completions, target_nums, solvable=None, target_value=Non
         protocol_counts.update(protocol_issue_counts(ans, tgt))
         completion_counts = completion_issue_counts(comp)
         protocol_counts.update(completion_counts)
+        if judgment.code == NUMBER_MISMATCH:
+            protocol_counts.update(number_usage_issue_counts(ans, nums, tgt))
         if judgment.code == WRONG_VALUE and judgment.value is not None:
             protocol_counts["legal_expr_wrong_value_count"] += 1
         if has_r1_format(comp):
             format_count += 1
 
-        reward = reward_for_judgment(judgment.code, judgment.value, ans, tgt)
+        reward = reward_for_judgment(judgment.code, judgment.value, ans, tgt, target_nums=nums)
         if completion_counts["multiple_answer_count"]:
             reward = min(reward, STRONG_PROTOCOL_PENALTY)
         rewards.append(reward)
@@ -244,6 +314,12 @@ def correctness_reward(completions, target_nums, solvable=None, target_value=Non
         "answer_text_count": protocol_counts["answer_text_count"],
         "legal_expr_wrong_value_count": protocol_counts["legal_expr_wrong_value_count"],
         "bare_target_count": protocol_counts["bare_target_count"],
+        "single_number_answer_count": protocol_counts["single_number_answer_count"],
+        "too_few_numbers_count": protocol_counts["too_few_numbers_count"],
+        "too_many_numbers_count": protocol_counts["too_many_numbers_count"],
+        "out_of_puzzle_number_count": protocol_counts["out_of_puzzle_number_count"],
+        "wrong_multiplicity_count": protocol_counts["wrong_multiplicity_count"],
+        "large_or_concatenated_number_count": protocol_counts["large_or_concatenated_number_count"],
         "copied_prompt_example_count": protocol_counts["copied_prompt_example_count"],
         "fullwidth_paren_count": protocol_counts["fullwidth_paren_count"],
         "multiple_answer_count": protocol_counts["multiple_answer_count"],
