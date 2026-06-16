@@ -22,6 +22,8 @@ HARD_END_INDEX = 1000
 DEFAULT_UNSOLVABLE_SEED = 20240613
 DEFAULT_SPLIT_SEED = 20240613
 COUNTDOWN_SOURCE = "Jiayi-Pan/Countdown-Tasks-3to4"
+TINYZERO_TRAIN_SIZE = 327_680
+TINYZERO_TEST_SIZE = 1_024
 
 
 def load_dataset(*args, **kwargs):
@@ -339,9 +341,20 @@ def load_countdown_samples(max_samples: int = -1) -> list[dict[str, Any]]:
         if max_samples >= 0 and len(samples) >= max_samples:
             break
 
-    samples = _unique_by_case(samples)
-    print(f"   Loaded {len(samples)} unique Countdown cases.")
+    print(f"   Loaded {len(samples)} Countdown cases.")
     return samples
+
+
+def split_countdown_tinyzero(
+    samples: list[dict[str, Any]],
+    train_size: int,
+    test_size: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    train_count = min(max(train_size, 0), len(samples))
+    test_count = min(max(test_size, 0), max(len(samples) - train_count, 0))
+    train_samples = samples[:train_count]
+    test_samples = samples[train_count : train_count + test_count]
+    return train_samples, test_samples
 
 
 def split_countdown_samples(
@@ -462,19 +475,23 @@ def prepare_countdown_ood(max_samples: int) -> list[dict[str, Any]]:
 
 def prepare_countdown_data(
     countdown_size: int = -1,
-    test_size: int = 200,
+    train_size: int = TINYZERO_TRAIN_SIZE,
+    test_size: int = TINYZERO_TEST_SIZE,
     split_seed: int = DEFAULT_SPLIT_SEED,
-    unsolvable_train_ratio: float = 0.1,
+    include_unsolvable_train: bool = False,
+    unsolvable_train_ratio: float = 0.0,
     unsolvable_size: int = 100,
     unsolvable_seed: int = DEFAULT_UNSOLVABLE_SEED,
 ) -> None:
     os.makedirs("data", exist_ok=True)
 
-    countdown_samples = load_countdown_samples(countdown_size)
-    train_samples, test_samples = split_countdown_samples(countdown_samples, test_size, split_seed)
+    required_count = train_size + test_size
+    load_limit = required_count if countdown_size < 0 else countdown_size
+    countdown_samples = load_countdown_samples(load_limit)
+    train_samples, test_samples = split_countdown_tinyzero(countdown_samples, train_size, test_size)
     reserved_keys = {case_key(sample) for sample in countdown_samples}
 
-    unsolvable_train_count = round(len(train_samples) * unsolvable_train_ratio)
+    unsolvable_train_count = round(len(train_samples) * unsolvable_train_ratio) if include_unsolvable_train else 0
     unsolvable_train_samples = generate_random_unsolvable_samples(
         unsolvable_train_count,
         unsolvable_seed,
@@ -489,7 +506,8 @@ def prepare_countdown_data(
     )
 
     train_samples_with_unsolvable = train_samples + unsolvable_train_samples
-    random.Random(split_seed).shuffle(train_samples_with_unsolvable)
+    if unsolvable_train_samples:
+        random.Random(split_seed).shuffle(train_samples_with_unsolvable)
 
     write_jsonl(TRAIN_PATH, train_samples_with_unsolvable)
     write_jsonl(TEST_PATH, test_samples)
@@ -503,7 +521,9 @@ def prepare_countdown_data(
             "count": len(train_samples_with_unsolvable),
             "solvable_count": len(train_samples),
             "unsolvable_count": len(unsolvable_train_samples),
+            "include_unsolvable_train": include_unsolvable_train,
             "unsolvable_train_ratio": unsolvable_train_ratio,
+            "requested": train_size,
         },
         "test": {
             "path": TEST_PATH,
@@ -518,6 +538,9 @@ def prepare_countdown_data(
             "seed": unsolvable_seed + 1,
         },
         "split_seed": split_seed,
+        "split_strategy": "tinyzero_sequential",
+        "train_size": len(train_samples),
+        "test_size": len(test_samples),
         "countdown_requested": countdown_size,
         "countdown_loaded": len(countdown_samples),
     }
@@ -588,17 +611,21 @@ def prepare_data(
     low_solved_rate_size: int = 100,
     with_countdown: bool = False,
     countdown_size: int = -1,
-    test_size: int = 200,
+    train_size: int = TINYZERO_TRAIN_SIZE,
+    test_size: int = TINYZERO_TEST_SIZE,
     split_seed: int = DEFAULT_SPLIT_SEED,
-    unsolvable_train_ratio: float = 0.1,
+    include_unsolvable_train: bool = False,
+    unsolvable_train_ratio: float = 0.0,
     unsolvable_size: int = 100,
     unsolvable_seed: int = DEFAULT_UNSOLVABLE_SEED,
 ) -> None:
     if task == "countdown":
         prepare_countdown_data(
             countdown_size=countdown_size,
+            train_size=train_size,
             test_size=test_size,
             split_seed=split_seed,
+            include_unsolvable_train=include_unsolvable_train,
             unsolvable_train_ratio=unsolvable_train_ratio,
             unsolvable_size=unsolvable_size,
             unsolvable_seed=unsolvable_seed,
@@ -620,12 +647,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Prepare train/test splits for Countdown arithmetic GRPO.")
     parser.add_argument("--task", choices=("countdown", "game24"), default="countdown", help="Dataset pipeline to run.")
     parser.add_argument("--low-solved-rate-size", type=int, default=100, help="Number of lowest solved-rate ToT cases to keep.")
-    parser.add_argument("--unsolvable-size", type=int, default=100, help="Number of locally enumerated unsolvable cases to export. Use -1 for all.")
+    parser.add_argument("--unsolvable-size", type=int, default=100, help="Number of local unsolvable holdout cases to export.")
     parser.add_argument("--unsolvable-seed", type=int, default=DEFAULT_UNSOLVABLE_SEED, help="Shuffle seed for the local unsolvable holdout.")
-    parser.add_argument("--unsolvable-train-ratio", type=float, default=0.1, help="Fraction of Countdown train samples to add as local unsolvable cases.")
+    parser.add_argument("--include-unsolvable-train", action="store_true", help="Also mix local unsolvable cases into Countdown train data. This is not TinyZero's original split.")
+    parser.add_argument("--unsolvable-train-ratio", type=float, default=0.0, help="Fraction of Countdown train samples to add as local unsolvable cases when --include-unsolvable-train is set.")
     parser.add_argument("--with-countdown", action="store_true", help="Also create Countdown 3-4 numbers OOD extension data.")
     parser.add_argument("--countdown-size", type=int, default=-1, help="Maximum Countdown cases to load. Use -1 for all.")
-    parser.add_argument("--test-size", type=int, default=200, help="Number of Countdown cases to reserve for data/test.jsonl.")
+    parser.add_argument("--train-size", type=int, default=TINYZERO_TRAIN_SIZE, help="Number of TinyZero Countdown cases to write to data/train.jsonl.")
+    parser.add_argument("--test-size", type=int, default=TINYZERO_TEST_SIZE, help="Number of TinyZero Countdown cases to write to data/test.jsonl after train-size.")
     parser.add_argument("--split-seed", type=int, default=DEFAULT_SPLIT_SEED, help="Deterministic seed for Countdown train/test split.")
     args = parser.parse_args()
 
@@ -634,8 +663,10 @@ def main() -> None:
         low_solved_rate_size=args.low_solved_rate_size,
         with_countdown=args.with_countdown,
         countdown_size=args.countdown_size,
+        train_size=args.train_size,
         test_size=args.test_size,
         split_seed=args.split_seed,
+        include_unsolvable_train=args.include_unsolvable_train,
         unsolvable_train_ratio=args.unsolvable_train_ratio,
         unsolvable_size=args.unsolvable_size,
         unsolvable_seed=args.unsolvable_seed,

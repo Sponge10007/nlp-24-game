@@ -15,7 +15,7 @@ from src.prompts import SYSTEM_PROMPT, get_prompt
 
 BASE_MODEL_NAME = "Qwen/Qwen2.5-1.5B-Instruct"
 LORA_MODEL_PATH = "./outputs/final_model"
-DEFAULT_TEST_DATA_PATHS = ["data/test.jsonl", "data/unsolvable_test.jsonl"]
+DEFAULT_TEST_DATA_PATHS = ["data/test.jsonl"]
 
 
 def load_jsonl(path: str) -> list[dict[str, Any]]:

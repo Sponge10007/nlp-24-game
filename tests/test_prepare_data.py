@@ -7,6 +7,7 @@ from data.prepare_data import (
     parse_solved_rate,
     select_tot_splits,
     split_countdown_samples,
+    split_countdown_tinyzero,
 )
 
 
@@ -63,6 +64,26 @@ class PrepareDataTest(unittest.TestCase):
 
         self.assertEqual(len(train_samples) + len(test_samples), 3)
         self.assertFalse(train_keys & test_keys)
+
+    def test_tinyzero_split_is_sequential(self):
+        samples = [
+            {"target_nums": [1, 2, index], "target_value": index + 10, "solvable": True, "source": "test"}
+            for index in range(10)
+        ]
+
+        train_samples, test_samples = split_countdown_tinyzero(samples, train_size=6, test_size=3)
+
+        self.assertEqual(train_samples, samples[:6])
+        self.assertEqual(test_samples, samples[6:9])
+
+    def test_default_countdown_data_has_no_unsolvable_train_samples(self):
+        samples = [
+            {"target_nums": [1, 2, index], "target_value": index + 10, "solvable": True, "source": "test"}
+            for index in range(30)
+        ]
+        train_samples, _ = split_countdown_tinyzero(samples, train_size=20, test_size=5)
+
+        self.assertTrue(all(sample["solvable"] for sample in train_samples))
 
     def test_generate_random_unsolvable_samples(self):
         samples = generate_random_unsolvable_samples(5, seed=123, min_target=50, max_target=60)
