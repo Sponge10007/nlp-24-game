@@ -8,8 +8,6 @@ from functools import lru_cache
 from itertools import combinations_with_replacement
 from typing import Any
 
-from datasets import load_dataset
-
 
 TRAIN_PATH = "data/train.jsonl"
 TEST_PATH = "data/test.jsonl"
@@ -22,6 +20,19 @@ SUMMARY_PATH = "data/dataset_summary.json"
 HARD_START_INDEX = 900
 HARD_END_INDEX = 1000
 DEFAULT_UNSOLVABLE_SEED = 20240613
+DEFAULT_SPLIT_SEED = 20240613
+COUNTDOWN_SOURCE = "Jiayi-Pan/Countdown-Tasks-3to4"
+
+
+def load_dataset(*args, **kwargs):
+    try:
+        from datasets import load_dataset as hf_load_dataset
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "The 'datasets' package is required to download Hugging Face datasets. "
+            "Install requirements.txt before running data preparation."
+        ) from exc
+    return hf_load_dataset(*args, **kwargs)
 
 
 def parse_nums(row: dict[str, Any], keys: tuple[str, ...]) -> list[int]:
@@ -48,6 +59,10 @@ def parse_bool(value: Any) -> bool:
 
 def puzzle_key(nums: list[int]) -> tuple[int, ...]:
     return tuple(sorted(nums))
+
+
+def case_key(sample: dict[str, Any]) -> tuple[tuple[int, ...], int | float]:
+    return puzzle_key(sample["target_nums"]), sample.get("target_value", 24)
 
 
 def get_first(row: dict[str, Any], keys: tuple[str, ...], default: Any = None) -> Any:
@@ -118,6 +133,18 @@ def _unique_by_puzzle(samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
     unique_samples: list[dict[str, Any]] = []
     for sample in samples:
         key = puzzle_key(sample["target_nums"])
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_samples.append(sample)
+    return unique_samples
+
+
+def _unique_by_case(samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[tuple[tuple[int, ...], int | float]] = set()
+    unique_samples: list[dict[str, Any]] = []
+    for sample in samples:
+        key = case_key(sample)
         if key in seen:
             continue
         seen.add(key)
@@ -284,6 +311,95 @@ def can_make_target(nums: list[int] | tuple[int, ...], target_value: int | float
     return search(start)
 
 
+def normalize_countdown_row(row: dict[str, Any], source_index: int | None = None) -> dict[str, Any] | None:
+    nums = parse_nums(row, ("nums", "numbers", "input", "inputs", "cards", "target_nums"))
+    if not 3 <= len(nums) <= 4:
+        return None
+
+    sample = {
+        "target_nums": nums,
+        "target_value": parse_target_value(row, default=24),
+        "solvable": parse_bool(get_first(row, ("solvable", "Solvable"), True)),
+        "source": COUNTDOWN_SOURCE,
+    }
+    if source_index is not None:
+        sample["source_index"] = source_index
+    return sample
+
+
+def load_countdown_samples(max_samples: int = -1) -> list[dict[str, Any]]:
+    print(f"1. Loading {COUNTDOWN_SOURCE} for Countdown training data...")
+    ds = load_dataset(COUNTDOWN_SOURCE, split="train")
+    samples: list[dict[str, Any]] = []
+    for index, row in enumerate(ds):
+        sample = normalize_countdown_row(dict(row), source_index=index)
+        if sample is None:
+            continue
+        samples.append(sample)
+        if max_samples >= 0 and len(samples) >= max_samples:
+            break
+
+    samples = _unique_by_case(samples)
+    print(f"   Loaded {len(samples)} unique Countdown cases.")
+    return samples
+
+
+def split_countdown_samples(
+    samples: list[dict[str, Any]],
+    test_size: int,
+    seed: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    shuffled = list(_unique_by_case(samples))
+    random.Random(seed).shuffle(shuffled)
+    test_count = min(max(test_size, 0), len(shuffled))
+    test_samples = shuffled[:test_count]
+    train_samples = shuffled[test_count:]
+    return train_samples, test_samples
+
+
+def generate_random_unsolvable_samples(
+    count: int,
+    seed: int,
+    *,
+    exclude_keys: set[tuple[tuple[int, ...], int | float]] | None = None,
+    min_num: int = 1,
+    max_num: int = 13,
+    min_target: int = 1,
+    max_target: int = 100,
+) -> list[dict[str, Any]]:
+    if count <= 0:
+        return []
+
+    rng = random.Random(seed)
+    excluded = set(exclude_keys or set())
+    samples: list[dict[str, Any]] = []
+    attempts = 0
+    max_attempts = max(10_000, count * 1_000)
+
+    while len(samples) < count and attempts < max_attempts:
+        attempts += 1
+        num_count = rng.choice((3, 4))
+        nums = [rng.randint(min_num, max_num) for _ in range(num_count)]
+        target_value = rng.randint(min_target, max_target)
+        sample = {
+            "target_nums": nums,
+            "target_value": target_value,
+            "solvable": False,
+            "source": "local_random_countdown_unsolvable",
+        }
+        key = case_key(sample)
+        if key in excluded:
+            continue
+        if can_make_target(nums, target_value):
+            continue
+        excluded.add(key)
+        samples.append(sample)
+
+    if len(samples) < count:
+        raise RuntimeError(f"Only generated {len(samples)} unsolvable samples after {attempts} attempts.")
+    return samples
+
+
 def enumerate_unsolvable_samples() -> list[dict[str, Any]]:
     samples: list[dict[str, Any]] = []
     for nums in combinations_with_replacement(range(1, 14), 4):
@@ -321,38 +437,99 @@ def prepare_unsolvable_data(max_samples: int, seed: int) -> tuple[list[dict[str,
 
 
 def prepare_countdown_ood(max_samples: int) -> list[dict[str, Any]]:
-    print("\n4. Loading Jiayi-Pan/Countdown-Tasks-3to4 for optional OOD extension...")
+    print(f"\n4. Loading {COUNTDOWN_SOURCE} for optional OOD extension...")
     samples: list[dict[str, Any]] = []
     try:
-        ds = load_dataset("Jiayi-Pan/Countdown-Tasks-3to4", split="train")
+        ds = load_dataset(COUNTDOWN_SOURCE, split="train")
     except Exception as exc:
         print(f"   Skipped countdown OOD data: {exc}")
         write_jsonl(COUNTDOWN_OOD_PATH, samples)
         return samples
 
-    for row in ds:
-        row = dict(row)
-        nums = parse_nums(row, ("nums", "numbers", "input", "inputs", "cards"))
-        if not 3 <= len(nums) <= 4:
+    for index, row in enumerate(ds):
+        sample = normalize_countdown_row(dict(row), source_index=index)
+        if sample is None:
             continue
-        target_value = parse_target_value(row, default=24)
-        samples.append(
-            {
-                "target_nums": nums,
-                "target_value": target_value,
-                "solvable": True,
-                "source": "Jiayi-Pan/Countdown-Tasks-3to4",
-            }
-        )
+        samples.append(sample)
         if len(samples) >= max_samples:
             break
 
+    samples = _unique_by_case(samples)
     write_jsonl(COUNTDOWN_OOD_PATH, samples)
     print(f"   Wrote {COUNTDOWN_OOD_PATH}: {len(samples)} optional OOD cases.")
     return samples
 
 
-def prepare_data(
+def prepare_countdown_data(
+    countdown_size: int = -1,
+    test_size: int = 200,
+    split_seed: int = DEFAULT_SPLIT_SEED,
+    unsolvable_train_ratio: float = 0.1,
+    unsolvable_size: int = 100,
+    unsolvable_seed: int = DEFAULT_UNSOLVABLE_SEED,
+) -> None:
+    os.makedirs("data", exist_ok=True)
+
+    countdown_samples = load_countdown_samples(countdown_size)
+    train_samples, test_samples = split_countdown_samples(countdown_samples, test_size, split_seed)
+    reserved_keys = {case_key(sample) for sample in countdown_samples}
+
+    unsolvable_train_count = round(len(train_samples) * unsolvable_train_ratio)
+    unsolvable_train_samples = generate_random_unsolvable_samples(
+        unsolvable_train_count,
+        unsolvable_seed,
+        exclude_keys=reserved_keys,
+    )
+    reserved_keys.update(case_key(sample) for sample in unsolvable_train_samples)
+
+    unsolvable_test_samples = generate_random_unsolvable_samples(
+        unsolvable_size,
+        unsolvable_seed + 1,
+        exclude_keys=reserved_keys,
+    )
+
+    train_samples_with_unsolvable = train_samples + unsolvable_train_samples
+    random.Random(split_seed).shuffle(train_samples_with_unsolvable)
+
+    write_jsonl(TRAIN_PATH, train_samples_with_unsolvable)
+    write_jsonl(TEST_PATH, test_samples)
+    write_jsonl(UNSOLVABLE_TEST_PATH, unsolvable_test_samples)
+
+    summary = {
+        "task": "countdown",
+        "source": COUNTDOWN_SOURCE,
+        "train": {
+            "path": TRAIN_PATH,
+            "count": len(train_samples_with_unsolvable),
+            "solvable_count": len(train_samples),
+            "unsolvable_count": len(unsolvable_train_samples),
+            "unsolvable_train_ratio": unsolvable_train_ratio,
+        },
+        "test": {
+            "path": TEST_PATH,
+            "count": len(test_samples),
+            "requested": test_size,
+        },
+        "unsolvable_holdout": {
+            "path": UNSOLVABLE_TEST_PATH,
+            "count": len(unsolvable_test_samples),
+            "solvable": False,
+            "source": "local_random_countdown_unsolvable",
+            "seed": unsolvable_seed + 1,
+        },
+        "split_seed": split_seed,
+        "countdown_requested": countdown_size,
+        "countdown_loaded": len(countdown_samples),
+    }
+    write_summary(summary)
+
+    print(f"   Wrote {TRAIN_PATH}: {len(train_samples_with_unsolvable)} training cases.")
+    print(f"   Wrote {TEST_PATH}: {len(test_samples)} Countdown test cases.")
+    print(f"   Wrote {UNSOLVABLE_TEST_PATH}: {len(unsolvable_test_samples)} unsolvable holdout cases.")
+    print(f"\nWrote {SUMMARY_PATH}.")
+
+
+def prepare_game24_data(
     low_solved_rate_size: int = 100,
     with_countdown: bool = False,
     countdown_size: int = 200,
@@ -406,19 +583,60 @@ def prepare_data(
     print(f"\nWrote {SUMMARY_PATH}.")
 
 
+def prepare_data(
+    task: str = "countdown",
+    low_solved_rate_size: int = 100,
+    with_countdown: bool = False,
+    countdown_size: int = -1,
+    test_size: int = 200,
+    split_seed: int = DEFAULT_SPLIT_SEED,
+    unsolvable_train_ratio: float = 0.1,
+    unsolvable_size: int = 100,
+    unsolvable_seed: int = DEFAULT_UNSOLVABLE_SEED,
+) -> None:
+    if task == "countdown":
+        prepare_countdown_data(
+            countdown_size=countdown_size,
+            test_size=test_size,
+            split_seed=split_seed,
+            unsolvable_train_ratio=unsolvable_train_ratio,
+            unsolvable_size=unsolvable_size,
+            unsolvable_seed=unsolvable_seed,
+        )
+        return
+    if task == "game24":
+        prepare_game24_data(
+            low_solved_rate_size=low_solved_rate_size,
+            with_countdown=with_countdown,
+            countdown_size=countdown_size if countdown_size >= 0 else 200,
+            unsolvable_size=unsolvable_size,
+            unsolvable_seed=unsolvable_seed,
+        )
+        return
+    raise ValueError(f"unsupported task: {task}")
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Prepare train/test splits for the 24-game GRPO project.")
+    parser = argparse.ArgumentParser(description="Prepare train/test splits for Countdown arithmetic GRPO.")
+    parser.add_argument("--task", choices=("countdown", "game24"), default="countdown", help="Dataset pipeline to run.")
     parser.add_argument("--low-solved-rate-size", type=int, default=100, help="Number of lowest solved-rate ToT cases to keep.")
     parser.add_argument("--unsolvable-size", type=int, default=100, help="Number of locally enumerated unsolvable cases to export. Use -1 for all.")
     parser.add_argument("--unsolvable-seed", type=int, default=DEFAULT_UNSOLVABLE_SEED, help="Shuffle seed for the local unsolvable holdout.")
+    parser.add_argument("--unsolvable-train-ratio", type=float, default=0.1, help="Fraction of Countdown train samples to add as local unsolvable cases.")
     parser.add_argument("--with-countdown", action="store_true", help="Also create Countdown 3-4 numbers OOD extension data.")
-    parser.add_argument("--countdown-size", type=int, default=200, help="Maximum countdown OOD cases to export.")
+    parser.add_argument("--countdown-size", type=int, default=-1, help="Maximum Countdown cases to load. Use -1 for all.")
+    parser.add_argument("--test-size", type=int, default=200, help="Number of Countdown cases to reserve for data/test.jsonl.")
+    parser.add_argument("--split-seed", type=int, default=DEFAULT_SPLIT_SEED, help="Deterministic seed for Countdown train/test split.")
     args = parser.parse_args()
 
     prepare_data(
+        task=args.task,
         low_solved_rate_size=args.low_solved_rate_size,
         with_countdown=args.with_countdown,
         countdown_size=args.countdown_size,
+        test_size=args.test_size,
+        split_seed=args.split_seed,
+        unsolvable_train_ratio=args.unsolvable_train_ratio,
         unsolvable_size=args.unsolvable_size,
         unsolvable_seed=args.unsolvable_seed,
     )

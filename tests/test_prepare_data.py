@@ -1,6 +1,13 @@
 import unittest
 
-from data.prepare_data import can_make_target, parse_solved_rate, select_tot_splits
+from data.prepare_data import (
+    can_make_target,
+    generate_random_unsolvable_samples,
+    normalize_countdown_row,
+    parse_solved_rate,
+    select_tot_splits,
+    split_countdown_samples,
+)
 
 
 class PrepareDataTest(unittest.TestCase):
@@ -31,6 +38,39 @@ class PrepareDataTest(unittest.TestCase):
     def test_can_make_target(self):
         self.assertTrue(can_make_target([3, 3, 8, 8]))
         self.assertFalse(can_make_target([1, 1, 1, 1]))
+        self.assertTrue(can_make_target([2, 3, 7], target_value=17))
+        self.assertFalse(can_make_target([1, 1, 1], target_value=99))
+
+    def test_normalize_countdown_row(self):
+        sample = normalize_countdown_row({"nums": [2, 3, 7], "target": 17}, source_index=5)
+
+        self.assertEqual(sample["target_nums"], [2, 3, 7])
+        self.assertEqual(sample["target_value"], 17)
+        self.assertTrue(sample["solvable"])
+        self.assertEqual(sample["source_index"], 5)
+
+    def test_split_countdown_samples_is_disjoint_by_case(self):
+        samples = [
+            {"target_nums": [1, 2, 3], "target_value": 6, "solvable": True, "source": "test"},
+            {"target_nums": [3, 2, 1], "target_value": 6, "solvable": True, "source": "test"},
+            {"target_nums": [2, 3, 7], "target_value": 17, "solvable": True, "source": "test"},
+            {"target_nums": [4, 5, 6], "target_value": 30, "solvable": True, "source": "test"},
+        ]
+
+        train_samples, test_samples = split_countdown_samples(samples, test_size=1, seed=7)
+        train_keys = {(tuple(sorted(s["target_nums"])), s["target_value"]) for s in train_samples}
+        test_keys = {(tuple(sorted(s["target_nums"])), s["target_value"]) for s in test_samples}
+
+        self.assertEqual(len(train_samples) + len(test_samples), 3)
+        self.assertFalse(train_keys & test_keys)
+
+    def test_generate_random_unsolvable_samples(self):
+        samples = generate_random_unsolvable_samples(5, seed=123, min_target=50, max_target=60)
+
+        self.assertEqual(len(samples), 5)
+        for sample in samples:
+            self.assertFalse(sample["solvable"])
+            self.assertFalse(can_make_target(sample["target_nums"], sample["target_value"]))
 
 
 if __name__ == "__main__":

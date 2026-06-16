@@ -197,7 +197,7 @@ def evaluate_cases(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Evaluate base/LoRA model on 24-game splits.")
+    parser = argparse.ArgumentParser(description="Evaluate base/LoRA model on Countdown arithmetic target splits.")
     parser.add_argument("--base-model", default=BASE_MODEL_NAME)
     parser.add_argument("--adapter-path", default=LORA_MODEL_PATH)
     parser.add_argument("--base-only", action="store_true")

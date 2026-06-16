@@ -28,6 +28,11 @@ class Game24JudgeTest(unittest.TestCase):
         self.assertTrue(judgment.ok)
         self.assertEqual(judgment.code, CORRECT)
 
+    def test_correct_non_24_target(self):
+        judgment = judge_answer("2*7+3", [2, 3, 7], target_value=17)
+        self.assertTrue(judgment.ok)
+        self.assertEqual(judgment.code, CORRECT)
+
     def test_missing_answer(self):
         self.assertEqual(judge_answer("", [1, 2, 3, 4]).code, MISSING_ANSWER)
 

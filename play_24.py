@@ -73,8 +73,8 @@ def solve_once(tokenizer, model, nums: list[int], target: int | float, args: arg
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Interactively solve 24-game puzzles with the trained model.")
-    parser.add_argument("numbers", nargs="*", type=int, help="Numbers such as: 3 3 8 8")
+    parser = argparse.ArgumentParser(description="Interactively solve 3-4 number arithmetic target puzzles with the trained model.")
+    parser.add_argument("numbers", nargs="*", type=int, help="Numbers such as: 3 3 8 8 or 2 3 7")
     parser.add_argument("--target", type=float, default=24)
     parser.add_argument("--base-model", default=BASE_MODEL_NAME)
     parser.add_argument("--adapter-path", default=LORA_MODEL_PATH)
@@ -95,7 +95,7 @@ def main() -> None:
         puzzles = [args.numbers]
     else:
         puzzles = []
-        print("Enter 3-4 numbers, for example: 3 3 8 8. Empty input exits.")
+        print("Enter 3-4 numbers, for example: 3 3 8 8 or 2 3 7. Empty input exits.")
         while True:
             raw = input("numbers> ").strip()
             if not raw:

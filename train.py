@@ -42,7 +42,7 @@ def preprocess_dataset(example):
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="GRPO train Qwen2.5-1.5B-Instruct on 24-game RLVR.")
+    parser = argparse.ArgumentParser(description="GRPO train Qwen2.5-1.5B-Instruct on Countdown arithmetic targets.")
     parser.add_argument("--model-name", default=MODEL_NAME)
     parser.add_argument("--train-data-path", default=TRAIN_DATA_PATH)
     parser.add_argument("--output-dir", default=OUTPUT_DIR)
