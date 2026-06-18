@@ -17,19 +17,19 @@ MODEL_NAME = "Qwen/Qwen2.5-1.5B-Instruct"
 TRAIN_DATA_PATH = "data/train.jsonl"
 OUTPUT_DIR = "./outputs/final_model"
 
-NUM_GENERATIONS = 2
+NUM_GENERATIONS = 8
 KL_COEF = 0.05
-MAX_PROMPT_LENGTH = 128
-MAX_COMPLETION_LENGTH = 384
+MAX_PROMPT_LENGTH = 256
+MAX_COMPLETION_LENGTH = 768
 NUM_TRAIN_EPOCHS = 6
 
 LEARNING_RATE = 5e-6
-PER_DEVICE_BATCH_SIZE = 1
-GRAD_ACCUM_STEPS = 8
+PER_DEVICE_BATCH_SIZE = 2
+GRAD_ACCUM_STEPS = 4
 LOGGING_STEPS = 10
 
-LORA_RANK = 8
-LORA_ALPHA = 16
+LORA_RANK = 32
+LORA_ALPHA = 64
 
 
 def preprocess_dataset(example):
@@ -65,8 +65,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lora-rank", type=int, default=LORA_RANK)
     parser.add_argument("--lora-alpha", type=int, default=LORA_ALPHA)
     parser.add_argument("--bf16", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--load-in-4bit", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--optim", default="paged_adamw_8bit")
+    parser.add_argument("--load-in-4bit", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--gradient-checkpointing", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--optim", default="adamw_torch")
     parser.add_argument("--reset-metrics", action=argparse.BooleanOptionalAction, default=True)
     return parser.parse_args()
 
@@ -90,7 +91,7 @@ def build_grpo_config(args: argparse.Namespace) -> GRPOConfig:
         "per_device_train_batch_size": args.per_device_batch_size,
         "gradient_accumulation_steps": args.grad_accum_steps,
         "kl_coef": args.kl_coef,
-        "gradient_checkpointing": True,
+        "gradient_checkpointing": args.gradient_checkpointing,
         "bf16": args.bf16,
         "optim": args.optim,
         "report_to": "none",
@@ -113,7 +114,10 @@ def build_grpo_config(args: argparse.Namespace) -> GRPOConfig:
 
 def main():
     args = parse_args()
-    run_name = args.run_name or f"grpo_qwen25_1_5b_lora{args.lora_rank}_g{args.num_generations}"
+    run_name = (
+        args.run_name
+        or f"grpo_qwen25_1_5b_lora{args.lora_rank}_g{args.num_generations}_len{args.max_completion_length}"
+    )
     run_dir = os.path.join(args.run_root, run_name)
     save_config(args, run_dir)
     configure_reward_logging(

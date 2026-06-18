@@ -10,13 +10,13 @@ OUTPUT_DIR = "./outputs/sft_model"
 
 NUM_TRAIN_EPOCHS = 2
 LEARNING_RATE = 2e-5
-PER_DEVICE_BATCH_SIZE = 1
-GRAD_ACCUM_STEPS = 8
+PER_DEVICE_BATCH_SIZE = 2
+GRAD_ACCUM_STEPS = 4
 LOGGING_STEPS = 10
-MAX_SEQ_LENGTH = 512
+MAX_SEQ_LENGTH = 768
 
-LORA_RANK = 8
-LORA_ALPHA = 16
+LORA_RANK = 32
+LORA_ALPHA = 64
 
 
 def parse_args() -> argparse.Namespace:
@@ -38,8 +38,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lora-rank", type=int, default=LORA_RANK)
     parser.add_argument("--lora-alpha", type=int, default=LORA_ALPHA)
     parser.add_argument("--bf16", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--load-in-4bit", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--optim", default="paged_adamw_8bit")
+    parser.add_argument("--load-in-4bit", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--gradient-checkpointing", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--optim", default="adamw_torch")
     return parser.parse_args()
 
 
@@ -70,7 +71,7 @@ def build_sft_config(args: argparse.Namespace):
         "save_steps": 50,
         "per_device_train_batch_size": args.per_device_batch_size,
         "gradient_accumulation_steps": args.grad_accum_steps,
-        "gradient_checkpointing": True,
+        "gradient_checkpointing": args.gradient_checkpointing,
         "bf16": args.bf16,
         "optim": args.optim,
         "report_to": "none",
@@ -122,7 +123,7 @@ def main():
     from peft import LoraConfig, get_peft_model
     from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
-    run_name = args.run_name or f"rejection_sft_lora{args.lora_rank}"
+    run_name = args.run_name or f"rejection_sft_lora{args.lora_rank}_len{args.max_seq_length}"
     run_dir = os.path.join(args.run_root, run_name)
     save_config(args, run_dir)
 
