@@ -41,6 +41,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--load-in-4bit", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--gradient-checkpointing", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--optim", default="adamw_torch")
+    parser.add_argument(
+        "--resume-from-checkpoint",
+        default="",
+        help="Checkpoint directory to resume from, or 'latest' to use the newest checkpoint.",
+    )
+    parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
 
@@ -75,11 +81,16 @@ def build_sft_config(args: argparse.Namespace):
         "bf16": args.bf16,
         "optim": args.optim,
         "report_to": "none",
-        "max_seq_length": args.max_seq_length,
         "dataset_text_field": "text",
+        "seed": args.seed,
+        "save_total_limit": 3,
     }
 
     supported_params = set(inspect.signature(SFTConfig.__init__).parameters)
+    if "max_length" in supported_params:
+        config_kwargs["max_length"] = args.max_seq_length
+    elif "max_seq_length" in supported_params:
+        config_kwargs["max_seq_length"] = args.max_seq_length
     filtered_kwargs = {
         key: value
         for key, value in config_kwargs.items()
@@ -91,7 +102,7 @@ def build_sft_config(args: argparse.Namespace):
     return SFTConfig(**filtered_kwargs)
 
 
-def build_sft_trainer(tokenizer, model, training_args, dataset):
+def build_sft_trainer(tokenizer, model, training_args, dataset, max_seq_length: int):
     from trl import SFTTrainer
 
     trainer_kwargs = {
@@ -101,9 +112,10 @@ def build_sft_trainer(tokenizer, model, training_args, dataset):
         "processing_class": tokenizer,
         "tokenizer": tokenizer,
         "dataset_text_field": "text",
-        "max_seq_length": getattr(training_args, "max_seq_length", MAX_SEQ_LENGTH),
     }
     supported_params = set(inspect.signature(SFTTrainer.__init__).parameters)
+    if "max_seq_length" in supported_params:
+        trainer_kwargs["max_seq_length"] = max_seq_length
     filtered_kwargs = {
         key: value
         for key, value in trainer_kwargs.items()
@@ -120,7 +132,7 @@ def main():
 
     import torch
     from datasets import load_dataset
-    from peft import LoraConfig, get_peft_model
+    from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
     from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
     run_name = args.run_name or f"rejection_sft_lora{args.lora_rank}_len{args.max_seq_length}"
@@ -131,7 +143,7 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    tokenizer.padding_side = "left"
+    tokenizer.padding_side = "right"
 
     print("2. Loading base model...")
     quantization_config = None
@@ -150,6 +162,12 @@ def main():
     else:
         model_kwargs["torch_dtype"] = torch_dtype
     model = AutoModelForCausalLM.from_pretrained(args.model_name, **model_kwargs)
+    model.config.use_cache = False
+    if args.load_in_4bit:
+        model = prepare_model_for_kbit_training(
+            model,
+            use_gradient_checkpointing=args.gradient_checkpointing,
+        )
 
     print(f"3. Injecting LoRA adapter (rank={args.lora_rank}, alpha={args.lora_alpha})...")
     lora_config = LoraConfig(
@@ -169,8 +187,11 @@ def main():
     training_args = build_sft_config(args)
 
     print("6. Starting SFT training...")
-    trainer = build_sft_trainer(tokenizer, model, training_args, dataset)
-    trainer.train()
+    trainer = build_sft_trainer(tokenizer, model, training_args, dataset, args.max_seq_length)
+    resume_from_checkpoint = args.resume_from_checkpoint or None
+    if resume_from_checkpoint == "latest":
+        resume_from_checkpoint = True
+    trainer.train(resume_from_checkpoint=resume_from_checkpoint)
 
     print(f"SFT training complete. Saving LoRA weights to {args.output_dir}")
     trainer.save_model(args.output_dir)

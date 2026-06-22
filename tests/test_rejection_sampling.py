@@ -1,7 +1,11 @@
 import unittest
 from argparse import Namespace
 
-from generate_rejection_sft import build_rejection_sft_rows
+from generate_rejection_sft import (
+    build_rejection_sft_rows,
+    merge_rows_in_input_order,
+    valid_existing_rows,
+)
 from src.rejection_sampling import (
     build_completion_from_deepseek_response,
     build_sft_row,
@@ -66,6 +70,18 @@ class RejectionSamplingTest(unittest.TestCase):
 
         self.assertEqual(completion, "<think>visible</think>\n<answer>8/(3-(8/3))</answer>")
 
+    def test_build_completion_adds_reasoning_to_answer_only_content(self):
+        completion = build_completion_from_deepseek_response(
+            "hidden reasoning",
+            "<answer>8/(3-(8/3))</answer>",
+        )
+
+        self.assertEqual(
+            completion,
+            "<think>hidden reasoning</think>\n<answer>8/(3-(8/3))</answer>",
+        )
+        self.assertTrue(validate_rejection_candidate(completion, [3, 3, 8, 8]).accepted)
+
     def test_deepseek_wrong_expression_is_rejected(self):
         completion = build_completion_from_deepseek_response(
             "bad arithmetic",
@@ -116,6 +132,30 @@ class RejectionSamplingTest(unittest.TestCase):
 
         self.assertEqual([row["target_nums"] for row in rows], [[1, 2, 3, 4], [3, 3, 8, 8]])
         self.assertEqual(counts["accepted"], 2)
+
+    def test_resume_merge_preserves_input_order_and_replaces_duplicate(self):
+        cases = [
+            {"target_nums": [1, 2, 3, 4], "target_value": 24},
+            {"target_nums": [3, 3, 8, 8], "target_value": 24},
+        ]
+        existing = [{"target_nums": [3, 3, 8, 8], "target_value": 24, "answer": "old"}]
+        new = [{"target_nums": [1, 2, 3, 4], "target_value": 24, "answer": "1*2*3*4"}]
+
+        rows = merge_rows_in_input_order(cases, existing, new)
+
+        self.assertEqual([row["answer"] for row in rows], ["1*2*3*4", "old"])
+
+    def test_resume_discards_invalid_existing_rows(self):
+        rows = [
+            {
+                "target_nums": [3, 3, 8, 8],
+                "target_value": 24,
+                "solvable": True,
+                "completion": "<think>bad</think><answer>1+2+3+4</answer>",
+            }
+        ]
+
+        self.assertEqual(valid_existing_rows(rows, require_r1_format=True), [])
 
 
 if __name__ == "__main__":

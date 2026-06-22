@@ -49,15 +49,41 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--api-model", default=API_MODEL)
     parser.add_argument("--input-data-path", default=INPUT_DATA_PATH)
     parser.add_argument("--output-data-path", default=OUTPUT_DATA_PATH)
-    parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT, help="Maximum number of input cases to process.")
-    parser.add_argument("--max-workers", type=int, default=MAX_WORKERS, help="Number of cases to process concurrently.")
+    parser.add_argument(
+        "--limit",
+        "--max-cases",
+        dest="limit",
+        type=int,
+        default=DEFAULT_LIMIT,
+        help="Maximum number of input cases to process.",
+    )
+    parser.add_argument(
+        "--max-workers",
+        "--num-workers",
+        dest="max_workers",
+        type=int,
+        default=MAX_WORKERS,
+        help="Number of cases to process concurrently.",
+    )
 
-    parser.add_argument("--attempts-per-case", type=int, default=16)
+    parser.add_argument(
+        "--attempts-per-case",
+        "--samples-per-case",
+        dest="attempts_per_case",
+        type=int,
+        default=16,
+    )
     parser.add_argument("--max-tokens", type=int, default=2048)
     parser.add_argument("--temperature", type=float, default=0.6)
     parser.add_argument("--top-p", type=float, default=0.95)
     parser.add_argument("--sleep-seconds", type=float, default=0.2)
     parser.add_argument("--require-r1-format", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--resume",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Keep valid rows already present in the output file and only request missing puzzles.",
+    )
     return parser.parse_args()
 
 
@@ -149,6 +175,37 @@ def build_rejection_sft_rows(client, cases: list[dict[str, Any]], args: argparse
     return rows, counts
 
 
+def case_key(case: dict[str, Any]) -> tuple[tuple[int, ...], float]:
+    nums = tuple(sorted(int(num) for num in case["target_nums"]))
+    return nums, float(case.get("target_value", 24))
+
+
+def merge_rows_in_input_order(
+    cases: list[dict[str, Any]],
+    existing_rows: list[dict[str, Any]],
+    new_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows_by_key = {case_key(row): row for row in existing_rows}
+    rows_by_key.update({case_key(row): row for row in new_rows})
+    return [rows_by_key[case_key(case)] for case in cases if case_key(case) in rows_by_key]
+
+
+def valid_existing_rows(rows: list[dict[str, Any]], require_r1_format: bool) -> list[dict[str, Any]]:
+    valid_rows: list[dict[str, Any]] = []
+    for row in rows:
+        completion = row.get("completion", "")
+        sample = select_rejection_sample(
+            [completion],
+            row["target_nums"],
+            target_value=row.get("target_value", 24),
+            solvable=bool(row.get("solvable", True)),
+            require_r1_format=require_r1_format,
+        )
+        if sample is not None:
+            valid_rows.append(row)
+    return valid_rows
+
+
 def main() -> None:
     args = parse_args()
     cases = load_jsonl(args.input_data_path)
@@ -156,8 +213,25 @@ def main() -> None:
         cases = cases[: args.limit]
     print(f"Loaded {len(cases)} cases from {args.input_data_path}.")
 
-    client = build_client(args)
-    rows, counts = build_rejection_sft_rows(client, cases, args)
+    existing_rows: list[dict[str, Any]] = []
+    if args.resume and os.path.exists(args.output_data_path):
+        existing_rows = valid_existing_rows(
+            load_jsonl(args.output_data_path),
+            require_r1_format=args.require_r1_format,
+        )
+    existing_keys = {case_key(row) for row in existing_rows}
+    pending_cases = [case for case in cases if case_key(case) not in existing_keys]
+    print(
+        f"Resume state: {len(existing_rows)} existing rows, "
+        f"{len(pending_cases)} puzzles still need sampling."
+    )
+
+    if pending_cases:
+        client = build_client(args)
+        new_rows, counts = build_rejection_sft_rows(client, pending_cases, args)
+    else:
+        new_rows, counts = [], Counter()
+    rows = merge_rows_in_input_order(cases, existing_rows, new_rows)
 
     write_jsonl(args.output_data_path, rows)
     summary_path = os.path.splitext(args.output_data_path)[0] + "_summary.json"
@@ -167,7 +241,9 @@ def main() -> None:
                 "input": args.input_data_path,
                 "output": args.output_data_path,
                 "total_cases": len(cases),
-                "processed_cases": len(cases),
+                "existing_rows": len(existing_rows),
+                "requested_cases": len(pending_cases),
+                "new_rows": len(new_rows),
                 "written_rows": len(rows),
                 "attempts_per_case": args.attempts_per_case,
                 "max_workers": args.max_workers,

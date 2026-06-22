@@ -23,6 +23,7 @@ src/prompts.py              # system prompt 和用户题目模板
 src/rewards.py              # GRPO 奖励函数、训练指标和样例日志
 src/rejection_sampling.py   # 拒绝采样核心逻辑
 tests/                      # 单元测试
+scripts/run_sft_grpo.sh     # 按实验版本隔离执行 SFT -> GRPO
 ```
 
 ## 环境准备
@@ -73,12 +74,14 @@ data/dataset_summary.json
 python generate_rejection_sft.py \
   --input-data-path data/train.jsonl \
   --output-data-path data/rejection_sft_train.jsonl \
-  --max-cases 500 \
-  --samples-per-case 4 \
-  --num-workers 8
+  --limit 500 \
+  --attempts-per-case 16 \
+  --max-workers 8
 ```
 
 脚本会调用 `deepseek-reasoner`，将 `reasoning_content` 和 `content` 整理成 `<think>...</think><answer>...</answer>` completion，并用本地裁判只保留第一个正确样本。生成的 `data/rejection_sft_train.jsonl` 被 `.gitignore` 忽略，需要在本地生成。
+
+默认启用断点续生成：如果输出文件已经存在，会重新验证已有样本，只请求缺失或无效的题目。需要从头生成时使用 `--no-resume`。旧参数名 `--max-cases`、`--samples-per-case`、`--num-workers` 仍可作为兼容别名使用。
 
 ## SFT 预热训练
 
@@ -168,25 +171,58 @@ python train.py \
   --optim paged_adamw_8bit
 ```
 
-## 输出
+SFT 和 GRPO 都支持从 checkpoint 恢复：
+
+```bash
+python train_sft.py ... --resume-from-checkpoint latest
+python train.py ... --resume-from-checkpoint latest --no-reset-metrics
+```
+
+也可以把 `latest` 换成具体的 `checkpoint-xxx` 路径。
+
+## 实验版本管理
+
+推荐使用统一脚本，避免不同训练版本覆盖：
+
+```bash
+export MODEL_NAME=/root/autodl-tmp/models/Qwen2.5-1.5B-Instruct
+
+# 一次执行完整 SFT -> GRPO
+bash scripts/run_sft_grpo.sh v2_deepseek500_sft_grpo all
+
+# 或分阶段执行
+bash scripts/run_sft_grpo.sh v2_deepseek500_sft_grpo sft
+bash scripts/run_sft_grpo.sh v2_deepseek500_sft_grpo grpo
+```
+
+每个实验使用一个不可重复的名称。若目标 adapter 已存在，脚本会拒绝覆盖；应优先使用新版本名。确实需要覆盖时显式设置 `ALLOW_OVERWRITE=1`。
+
+版本目录结构：
 
 ```text
-outputs/sft_model/                          # SFT LoRA 权重
-outputs/final_model/                        # GRPO LoRA 权重
-outputs/sft_checkpoints/                    # SFT checkpoint
-outputs/checkpoints/                        # GRPO checkpoint
-outputs/runs/<run_name>/config.json         # GRPO 配置
-outputs/runs/<run_name>/sft_config.json     # SFT 配置
-outputs/runs/<run_name>/training_metrics.csv
-outputs/runs/<run_name>/train_log.txt
+outputs/experiments/<experiment>/
+├── code_commit.txt
+├── code_branch.txt
+├── code_status.txt
+├── dataset_summary.json
+├── sft/
+│   ├── adapter/
+│   ├── checkpoints/
+│   └── sft_config.json
+└── grpo/
+    ├── adapter/
+    ├── checkpoints/
+    ├── config.json
+    ├── training_metrics.csv
+    └── train_log.txt
 ```
 
 ## 绘制训练曲线
 
 ```bash
 python plot_curve.py \
-  --metrics outputs/runs/deepseek_sft_then_grpo_lora32_g8_len768/training_metrics.csv \
-  --output outputs/runs/deepseek_sft_then_grpo_lora32_g8_len768/accuracy_curve.png
+  --metrics outputs/experiments/v2_deepseek500_sft_grpo/grpo/training_metrics.csv \
+  --output outputs/experiments/v2_deepseek500_sft_grpo/grpo/accuracy_curve.png
 ```
 
 ## 评估
@@ -195,11 +231,12 @@ python plot_curve.py \
 
 ```bash
 python evaluate.py \
+  --adapter-path outputs/experiments/v2_deepseek500_sft_grpo/grpo/adapter \
   --test-data-path data/test_hard_900_1000.jsonl \
   --test-data-path data/test_low_solved_rate.jsonl \
   --test-data-path data/unsolvable_test.jsonl \
-  --output-jsonl outputs/eval_results.jsonl \
-  --summary-json outputs/eval_summary.json
+  --output-jsonl outputs/experiments/v2_deepseek500_sft_grpo/grpo/eval_results.jsonl \
+  --summary-json outputs/experiments/v2_deepseek500_sft_grpo/grpo/eval_summary.json
 ```
 
 评估 base model 作为 zero-shot baseline：

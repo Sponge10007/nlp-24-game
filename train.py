@@ -69,6 +69,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gradient-checkpointing", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--optim", default="adamw_torch")
     parser.add_argument("--reset-metrics", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--resume-from-checkpoint",
+        default="",
+        help="Checkpoint directory to resume from, or 'latest' to use the newest checkpoint.",
+    )
+    parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
 
@@ -95,6 +101,8 @@ def build_grpo_config(args: argparse.Namespace) -> GRPOConfig:
         "bf16": args.bf16,
         "optim": args.optim,
         "report_to": "none",
+        "seed": args.seed,
+        "save_total_limit": 3,
     }
 
     supported_params = set(inspect.signature(GRPOConfig.__init__).parameters)
@@ -181,7 +189,10 @@ def main():
     )
 
     try:
-        trainer.train()
+        resume_from_checkpoint = args.resume_from_checkpoint or None
+        if resume_from_checkpoint == "latest":
+            resume_from_checkpoint = True
+        trainer.train(resume_from_checkpoint=resume_from_checkpoint)
     finally:
         flush_reward_logs()
 

@@ -28,10 +28,15 @@ def build_prompt(target_nums: list[int], target_value: int | float = 24) -> list
 def build_completion_from_deepseek_response(reasoning_content: str | None, content: str | None) -> str:
     content = (content or "").strip()
     reasoning_content = (reasoning_content or "").strip()
-    if "<answer>" in content.lower() and "</answer>" in content.lower():
+    lower_content = content.lower()
+    has_answer = "<answer>" in lower_content and "</answer>" in lower_content
+    has_think = "<think>" in lower_content and "</think>" in lower_content
+    if has_answer and has_think:
         return content
 
     think = reasoning_content or "模型未返回 reasoning_content。"
+    if has_answer:
+        return f"<think>{think}</think>\n{content}"
     return f"<think>{think}</think>\n<answer>{content}</answer>"
 
 
