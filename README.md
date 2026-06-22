@@ -258,6 +258,44 @@ export GRPO_MAX_COMPLETION_LENGTH=512
 bash scripts/run_sft_grpo.sh v4_1_canonical_solution grpo
 ```
 
+## v5：从 v3 最佳 adapter 保守续训 GRPO
+
+如果扩充 SFT 导致可解题退化，不再重复 SFT。保留 v3 的 `10%/2%` 最佳 adapter，以较小学习率在 `1162` 道可解题和 `100` 道不可解题上继续 GRPO。
+
+生成 v5 数据：
+
+```bash
+python data/prepare_v5_grpo_data.py \
+  --train-path data/train.jsonl \
+  --solvable-test-path data/test_all_nonoverlap.jsonl \
+  --unsolvable-test-path data/unsolvable_test.jsonl \
+  --output-dir outputs/datasets/v5_continue_grpo_mixed100 \
+  --unsolvable-size 100 \
+  --seed 20260623
+```
+
+训练：
+
+```bash
+export MODEL_NAME=/root/autodl-tmp/models/Qwen2.5-1.5B-Instruct
+export TRAIN_DATA_PATH=outputs/datasets/v5_continue_grpo_mixed100/grpo_train.jsonl
+export GRPO_INIT_ADAPTER_PATH=outputs/experiments/v3_compact_sft_grpo/grpo/adapter
+export GRPO_NUM_TRAIN_EPOCHS=3
+export GRPO_LEARNING_RATE=2e-6
+export GRPO_NUM_GENERATIONS=8
+export GRPO_MAX_COMPLETION_LENGTH=512
+
+bash scripts/run_sft_grpo.sh v5_continue_grpo_mixed100 grpo
+```
+
+结果保存在：
+
+```text
+outputs/experiments/v5_continue_grpo_mixed100/grpo/
+```
+
+`GRPO_INIT_ADAPTER_PATH` 允许版本脚本从任意已有 LoRA adapter 继续 GRPO，不要求同一实验目录下先运行 SFT。
+
 低显存 SFT 回退：
 
 ```bash

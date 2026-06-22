@@ -9,6 +9,7 @@ SFT_DATA_PATH="${SFT_DATA_PATH:-outputs/datasets/deepseek500_compact_v2/train.js
 TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-data/train.jsonl}"
 EXPERIMENT_ROOT="${EXPERIMENT_ROOT:-outputs/experiments}"
 ROOT="${EXPERIMENT_ROOT}/${EXPERIMENT_NAME}"
+GRPO_INIT_ADAPTER_PATH="${GRPO_INIT_ADAPTER_PATH:-$ROOT/sft/adapter}"
 SFT_NUM_TRAIN_EPOCHS="${SFT_NUM_TRAIN_EPOCHS:-3}"
 SFT_LEARNING_RATE="${SFT_LEARNING_RATE:-5e-5}"
 SFT_MAX_SEQ_LENGTH="${SFT_MAX_SEQ_LENGTH:-512}"
@@ -72,9 +73,9 @@ run_sft() {
 }
 
 run_grpo() {
-  if [[ ! -f "$ROOT/sft/adapter/adapter_config.json" ]]; then
-    echo "Missing SFT adapter: $ROOT/sft/adapter" >&2
-    echo "Run the sft stage first." >&2
+  if [[ ! -f "$GRPO_INIT_ADAPTER_PATH/adapter_config.json" ]]; then
+    echo "Missing initial adapter: $GRPO_INIT_ADAPTER_PATH" >&2
+    echo "Run the sft stage first or set GRPO_INIT_ADAPTER_PATH." >&2
     exit 1
   fi
   if [[ ! -f "$TRAIN_DATA_PATH" ]]; then
@@ -95,7 +96,7 @@ run_grpo() {
   python train.py \
     --model-name "$MODEL_NAME" \
     --train-data-path "$TRAIN_DATA_PATH" \
-    --adapter-init-path "$ROOT/sft/adapter" \
+    --adapter-init-path "$GRPO_INIT_ADAPTER_PATH" \
     --output-dir "$ROOT/grpo/adapter" \
     --checkpoint-dir "$ROOT/grpo/checkpoints" \
     --run-root "$ROOT" \
