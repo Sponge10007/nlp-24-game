@@ -5,7 +5,7 @@ import os
 
 import torch
 from datasets import load_dataset
-from peft import LoraConfig, get_peft_model
+from peft import LoraConfig, PeftModel, get_peft_model
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import GRPOConfig, GRPOTrainer
 
@@ -49,6 +49,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint-dir", default="./outputs/checkpoints")
     parser.add_argument("--run-name", default="")
     parser.add_argument("--run-root", default="./outputs/runs")
+    parser.add_argument("--adapter-init-path", default="", help="Optional LoRA adapter path to continue GRPO from SFT warmup.")
 
     parser.add_argument("--num-generations", type=int, default=NUM_GENERATIONS)
     parser.add_argument("--kl-coef", type=float, default=KL_COEF)
@@ -68,6 +69,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gradient-checkpointing", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--optim", default="adamw_torch")
     parser.add_argument("--reset-metrics", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--resume-from-checkpoint",
+        default="",
+        help="Checkpoint directory to resume from, or 'latest' to use the newest checkpoint.",
+    )
+    parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
 
@@ -94,6 +101,8 @@ def build_grpo_config(args: argparse.Namespace) -> GRPOConfig:
         "bf16": args.bf16,
         "optim": args.optim,
         "report_to": "none",
+        "seed": args.seed,
+        "save_total_limit": 3,
     }
 
     supported_params = set(inspect.signature(GRPOConfig.__init__).parameters)
@@ -149,15 +158,19 @@ def main():
         model_kwargs["torch_dtype"] = torch_dtype
     model = AutoModelForCausalLM.from_pretrained(args.model_name, **model_kwargs)
 
-    print(f"3. Injecting LoRA adapter (rank={args.lora_rank}, alpha={args.lora_alpha})...")
-    lora_config = LoraConfig(
-        r=args.lora_rank,
-        lora_alpha=args.lora_alpha,
-        target_modules=["q_proj", "v_proj", "k_proj", "o_proj"],
-        task_type="CAUSAL_LM",
-        bias="none",
-    )
-    model = get_peft_model(model, lora_config)
+    if args.adapter_init_path:
+        print(f"3. Loading initial LoRA adapter for GRPO: {args.adapter_init_path}")
+        model = PeftModel.from_pretrained(model, args.adapter_init_path, is_trainable=True)
+    else:
+        print(f"3. Injecting LoRA adapter (rank={args.lora_rank}, alpha={args.lora_alpha})...")
+        lora_config = LoraConfig(
+            r=args.lora_rank,
+            lora_alpha=args.lora_alpha,
+            target_modules=["q_proj", "v_proj", "k_proj", "o_proj"],
+            task_type="CAUSAL_LM",
+            bias="none",
+        )
+        model = get_peft_model(model, lora_config)
 
     print(f"4. Loading train data: {args.train_data_path}")
     dataset = load_dataset("json", data_files=args.train_data_path, split="train")
@@ -176,7 +189,10 @@ def main():
     )
 
     try:
-        trainer.train()
+        resume_from_checkpoint = args.resume_from_checkpoint or None
+        if resume_from_checkpoint == "latest":
+            resume_from_checkpoint = True
+        trainer.train(resume_from_checkpoint=resume_from_checkpoint)
     finally:
         flush_reward_logs()
 

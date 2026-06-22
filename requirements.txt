@@ -19,3 +19,6 @@ matplotlib>=3.7.0
 
 # 进度条展示 (用于评估脚本)
 tqdm>=4.66.0
+
+# DeepSeek API / OpenAI-compatible client for rejection-sampling SFT data
+openai>=1.0.0

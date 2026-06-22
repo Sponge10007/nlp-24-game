@@ -8,8 +8,6 @@ from functools import lru_cache
 from itertools import combinations_with_replacement
 from typing import Any
 
-from datasets import load_dataset
-
 
 TRAIN_PATH = "data/train.jsonl"
 TEST_PATH = "data/test.jsonl"
@@ -22,6 +20,12 @@ SUMMARY_PATH = "data/dataset_summary.json"
 HARD_START_INDEX = 900
 HARD_END_INDEX = 1000
 DEFAULT_UNSOLVABLE_SEED = 20240613
+
+
+def load_hf_dataset(*args: Any, **kwargs: Any):
+    from datasets import load_dataset
+
+    return load_dataset(*args, **kwargs)
 
 
 def parse_nums(row: dict[str, Any], keys: tuple[str, ...]) -> list[int]:
@@ -150,7 +154,7 @@ def select_tot_splits(
 
 def prepare_tot_data(low_solved_rate_size: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     print("1. Loading test-time-compute/game-of-24 for held-out tests...")
-    tot_ds = load_dataset("test-time-compute/game-of-24", split="train")
+    tot_ds = load_hf_dataset("test-time-compute/game-of-24", split="train")
 
     all_samples: list[dict[str, Any]] = []
     for index, row in enumerate(tot_ds):
@@ -201,7 +205,7 @@ def prepare_tot_data(low_solved_rate_size: int) -> tuple[list[dict[str, Any]], l
 
 def prepare_nlile_data(test_keys: set[tuple[int, ...]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     print("\n2. Loading nlile/24-game for train data...")
-    nlile_ds = load_dataset("nlile/24-game", split="train")
+    nlile_ds = load_hf_dataset("nlile/24-game", split="train")
 
     train_samples: list[dict[str, Any]] = []
     dataset_unsolvable_samples: list[dict[str, Any]] = []
@@ -324,7 +328,7 @@ def prepare_countdown_ood(max_samples: int) -> list[dict[str, Any]]:
     print("\n4. Loading Jiayi-Pan/Countdown-Tasks-3to4 for optional OOD extension...")
     samples: list[dict[str, Any]] = []
     try:
-        ds = load_dataset("Jiayi-Pan/Countdown-Tasks-3to4", split="train")
+        ds = load_hf_dataset("Jiayi-Pan/Countdown-Tasks-3to4", split="train")
     except Exception as exc:
         print(f"   Skipped countdown OOD data: {exc}")
         write_jsonl(COUNTDOWN_OOD_PATH, samples)
