@@ -192,6 +192,72 @@ bash scripts/run_sft_grpo.sh v4_multi_solution_unsolvable grpo
 outputs/experiments/v4_multi_solution_unsolvable/
 ```
 
+## v4.1：单一规范答案 SFT
+
+如果多解 SFT 导致同一 prompt 的不同答案互相干扰，使用 v4.1：
+
+- 优先复用 v3 的 500 条 DeepSeek 精简正确答案；
+- 其余训练题由确定性搜索补齐；
+- 每道可解题只保留一个规范答案；
+- SFT 仅加入 150 道不可解题；
+- GRPO 仍使用 300 道不可解题；
+- v3、v4 和 v4.1 使用独立目录，互不覆盖。
+
+生成数据：
+
+```bash
+python data/prepare_v41_training_data.py \
+  --train-path data/train.jsonl \
+  --teacher-sft-path outputs/datasets/deepseek500_compact_v2/train.jsonl \
+  --solvable-test-path data/test_all_nonoverlap.jsonl \
+  --unsolvable-test-path data/unsolvable_test.jsonl \
+  --output-dir outputs/datasets/v4_1_canonical_solution \
+  --unsolvable-sft-size 150 \
+  --unsolvable-grpo-size 300 \
+  --search-candidates 16 \
+  --seed 20260622
+```
+
+检查 `summary.json` 中：
+
+```text
+solvable_train_puzzles=1162
+unique_solvable_sft_puzzles=1162
+teacher_solution_rows=500
+deterministic_solution_rows=662
+missing_solution_rows=0
+unsolvable_sft_puzzles=150
+unsolvable_grpo_puzzles=300
+solvable_test_overlap=0
+unsolvable_test_overlap=0
+sft_rows=1312
+grpo_rows=1462
+```
+
+训练 v4.1 SFT：
+
+```bash
+export MODEL_NAME=/root/autodl-tmp/models/Qwen2.5-1.5B-Instruct
+export SFT_DATA_PATH=outputs/datasets/v4_1_canonical_solution/sft_train.jsonl
+export TRAIN_DATA_PATH=outputs/datasets/v4_1_canonical_solution/grpo_train.jsonl
+export SFT_NUM_TRAIN_EPOCHS=1
+export SFT_LEARNING_RATE=1e-5
+export SFT_MAX_SEQ_LENGTH=512
+
+bash scripts/run_sft_grpo.sh v4_1_canonical_solution sft
+```
+
+确认 SFT 评估没有相对 v3 明显退化后再运行 GRPO：
+
+```bash
+export GRPO_NUM_TRAIN_EPOCHS=4
+export GRPO_LEARNING_RATE=3e-6
+export GRPO_NUM_GENERATIONS=8
+export GRPO_MAX_COMPLETION_LENGTH=512
+
+bash scripts/run_sft_grpo.sh v4_1_canonical_solution grpo
+```
+
 低显存 SFT 回退：
 
 ```bash
