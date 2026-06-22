@@ -5,15 +5,15 @@ import os
 
 
 MODEL_NAME = "Qwen/Qwen2.5-1.5B-Instruct"
-SFT_DATA_PATH = "data/rejection_sft_train.jsonl"
+SFT_DATA_PATH = "outputs/datasets/deepseek500_compact_v2/train.jsonl"
 OUTPUT_DIR = "./outputs/sft_model"
 
-NUM_TRAIN_EPOCHS = 2
-LEARNING_RATE = 2e-5
+NUM_TRAIN_EPOCHS = 3
+LEARNING_RATE = 5e-5
 PER_DEVICE_BATCH_SIZE = 2
 GRAD_ACCUM_STEPS = 4
 LOGGING_STEPS = 10
-MAX_SEQ_LENGTH = 768
+MAX_SEQ_LENGTH = 512
 
 LORA_RANK = 32
 LORA_ALPHA = 64
@@ -56,16 +56,6 @@ def save_config(args: argparse.Namespace, run_dir: str) -> None:
         json.dump(vars(args), f, ensure_ascii=False, indent=2)
 
 
-def render_text(tokenizer, example: dict) -> dict:
-    prompt_text = tokenizer.apply_chat_template(
-        example["prompt"],
-        tokenize=False,
-        add_generation_prompt=True,
-    )
-    example["text"] = prompt_text + example["completion"] + tokenizer.eos_token
-    return example
-
-
 def build_sft_config(args: argparse.Namespace):
     from trl import SFTConfig
 
@@ -81,12 +71,19 @@ def build_sft_config(args: argparse.Namespace):
         "bf16": args.bf16,
         "optim": args.optim,
         "report_to": "none",
-        "dataset_text_field": "text",
         "seed": args.seed,
         "save_total_limit": 3,
+        "completion_only_loss": True,
+        "packing": False,
+        "eos_token": "<|im_end|>",
     }
 
     supported_params = set(inspect.signature(SFTConfig.__init__).parameters)
+    if "completion_only_loss" not in supported_params:
+        raise RuntimeError(
+            "Installed TRL does not support completion_only_loss; "
+            "upgrade to a compatible TRL version before training."
+        )
     if "max_length" in supported_params:
         config_kwargs["max_length"] = args.max_seq_length
     elif "max_seq_length" in supported_params:
@@ -111,7 +108,6 @@ def build_sft_trainer(tokenizer, model, training_args, dataset, max_seq_length: 
         "train_dataset": dataset,
         "processing_class": tokenizer,
         "tokenizer": tokenizer,
-        "dataset_text_field": "text",
     }
     supported_params = set(inspect.signature(SFTTrainer.__init__).parameters)
     if "max_seq_length" in supported_params:
@@ -181,10 +177,10 @@ def main():
 
     print(f"4. Loading rejection-sampled SFT data: {args.train_data_path}")
     dataset = load_dataset("json", data_files=args.train_data_path, split="train")
-    dataset = dataset.map(
-        lambda example: render_text(tokenizer, example),
-        remove_columns=dataset.column_names,
-    )
+    required_columns = {"prompt", "completion"}
+    missing_columns = required_columns - set(dataset.column_names)
+    if missing_columns:
+        raise ValueError(f"SFT dataset is missing required columns: {sorted(missing_columns)}")
 
     print("5. Building SFT config...")
     training_args = build_sft_config(args)

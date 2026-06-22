@@ -5,7 +5,7 @@ EXPERIMENT_NAME="${1:?Usage: bash scripts/run_sft_grpo.sh <experiment-name> [sft
 STAGE="${2:-all}"
 
 MODEL_NAME="${MODEL_NAME:-/root/autodl-tmp/models/Qwen2.5-1.5B-Instruct}"
-SFT_DATA_PATH="${SFT_DATA_PATH:-data/rejection_sft_train.jsonl}"
+SFT_DATA_PATH="${SFT_DATA_PATH:-outputs/datasets/deepseek500_compact_v2/train.jsonl}"
 TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-data/train.jsonl}"
 EXPERIMENT_ROOT="${EXPERIMENT_ROOT:-outputs/experiments}"
 ROOT="${EXPERIMENT_ROOT}/${EXPERIMENT_NAME}"

@@ -83,14 +83,33 @@ python generate_rejection_sft.py \
 
 默认启用断点续生成：如果输出文件已经存在，会重新验证已有样本，只请求缺失或无效的题目。需要从头生成时使用 `--no-resume`。旧参数名 `--max-cases`、`--samples-per-case`、`--num-workers` 仍可作为兼容别名使用。
 
+### 生成短算式推理 SFT 数据
+
+不要直接用 DeepSeek 的长篇原始 reasoning 训练。将已经严格验证的答案转换为短算式轨迹：
+
+```bash
+python data/prepare_compact_sft_data.py \
+  --input-path outputs/datasets/deepseek500_v1/train.jsonl \
+  --output-path outputs/datasets/deepseek500_compact_v2/train.jsonl
+```
+
+例如：
+
+```text
+<think>1+1=2; 2+1=3; 8*3=24</think>
+<answer>8*(1+1+1)</answer>
+```
+
+转换过程不会调用 API，并会再次使用本地裁判验证每个答案。输出使用 TRL conversational prompt-completion 格式，训练时只对 completion 计算 loss。
+
 ## SFT 预热训练
 
 默认 24GB 高配 LoRA：
 
 ```bash
 python train_sft.py \
-  --train-data-path data/rejection_sft_train.jsonl \
-  --run-name rejection_sft_lora32_len768
+  --train-data-path outputs/datasets/deepseek500_compact_v2/train.jsonl \
+  --run-name compact_sft_lora32_len512
 ```
 
 默认关键参数：
@@ -100,7 +119,10 @@ load_in_4bit=False
 bf16=True
 lora_rank=32
 lora_alpha=64
-max_seq_length=768
+max_seq_length=512
+completion_only_loss=True
+learning_rate=5e-5
+num_train_epochs=3
 per_device_batch_size=2
 grad_accum_steps=4
 gradient_checkpointing=False
@@ -188,11 +210,11 @@ python train.py ... --resume-from-checkpoint latest --no-reset-metrics
 export MODEL_NAME=/root/autodl-tmp/models/Qwen2.5-1.5B-Instruct
 
 # 一次执行完整 SFT -> GRPO
-bash scripts/run_sft_grpo.sh v2_deepseek500_sft_grpo all
+bash scripts/run_sft_grpo.sh v3_compact_sft_grpo all
 
 # 或分阶段执行
-bash scripts/run_sft_grpo.sh v2_deepseek500_sft_grpo sft
-bash scripts/run_sft_grpo.sh v2_deepseek500_sft_grpo grpo
+bash scripts/run_sft_grpo.sh v3_compact_sft_grpo sft
+bash scripts/run_sft_grpo.sh v3_compact_sft_grpo grpo
 ```
 
 每个实验使用一个不可重复的名称。若目标 adapter 已存在，脚本会拒绝覆盖；应优先使用新版本名。确实需要覆盖时显式设置 `ALLOW_OVERWRITE=1`。
@@ -221,8 +243,8 @@ outputs/experiments/<experiment>/
 
 ```bash
 python plot_curve.py \
-  --metrics outputs/experiments/v2_deepseek500_sft_grpo/grpo/training_metrics.csv \
-  --output outputs/experiments/v2_deepseek500_sft_grpo/grpo/accuracy_curve.png
+  --metrics outputs/experiments/v3_compact_sft_grpo/grpo/training_metrics.csv \
+  --output outputs/experiments/v3_compact_sft_grpo/grpo/accuracy_curve.png
 ```
 
 ## 评估
@@ -231,12 +253,12 @@ python plot_curve.py \
 
 ```bash
 python evaluate.py \
-  --adapter-path outputs/experiments/v2_deepseek500_sft_grpo/grpo/adapter \
+  --adapter-path outputs/experiments/v3_compact_sft_grpo/grpo/adapter \
   --test-data-path data/test_hard_900_1000.jsonl \
   --test-data-path data/test_low_solved_rate.jsonl \
   --test-data-path data/unsolvable_test.jsonl \
-  --output-jsonl outputs/experiments/v2_deepseek500_sft_grpo/grpo/eval_results.jsonl \
-  --summary-json outputs/experiments/v2_deepseek500_sft_grpo/grpo/eval_summary.json
+  --output-jsonl outputs/experiments/v3_compact_sft_grpo/grpo/eval_results.jsonl \
+  --summary-json outputs/experiments/v3_compact_sft_grpo/grpo/eval_summary.json
 ```
 
 评估 base model 作为 zero-shot baseline：
