@@ -181,7 +181,10 @@ def main():
 
     print(f"4. Loading rejection-sampled SFT data: {args.train_data_path}")
     dataset = load_dataset("json", data_files=args.train_data_path, split="train")
-    dataset = dataset.map(lambda example: render_text(tokenizer, example))
+    dataset = dataset.map(
+        lambda example: render_text(tokenizer, example),
+        remove_columns=dataset.column_names,
+    )
 
     print("5. Building SFT config...")
     training_args = build_sft_config(args)
