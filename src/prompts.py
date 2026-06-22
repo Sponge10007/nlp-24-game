@@ -5,7 +5,8 @@ SYSTEM_PROMPT = """你是一个数字算式推理专家。
 <answer> 内只能包含 ASCII 数字、空格和 + - * / ( )。
 不要在 <answer> 内输出等号、文字、单位或第二个答案。
 不要把多个数字拼接成新数字，例如不能把 6 和 9 写成 69。
-不要只回答目标值或中间结果。"""
+不要只回答目标值或中间结果。
+如果题目确实无解，<answer> 内只输出精确的 UNSOLVABLE。"""
 
 
 def get_prompt(numbers: list[int], target_value: int | float = 24) -> str:

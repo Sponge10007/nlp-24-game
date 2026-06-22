@@ -9,6 +9,13 @@ SFT_DATA_PATH="${SFT_DATA_PATH:-outputs/datasets/deepseek500_compact_v2/train.js
 TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-data/train.jsonl}"
 EXPERIMENT_ROOT="${EXPERIMENT_ROOT:-outputs/experiments}"
 ROOT="${EXPERIMENT_ROOT}/${EXPERIMENT_NAME}"
+SFT_NUM_TRAIN_EPOCHS="${SFT_NUM_TRAIN_EPOCHS:-3}"
+SFT_LEARNING_RATE="${SFT_LEARNING_RATE:-5e-5}"
+SFT_MAX_SEQ_LENGTH="${SFT_MAX_SEQ_LENGTH:-512}"
+GRPO_NUM_TRAIN_EPOCHS="${GRPO_NUM_TRAIN_EPOCHS:-6}"
+GRPO_LEARNING_RATE="${GRPO_LEARNING_RATE:-5e-6}"
+GRPO_NUM_GENERATIONS="${GRPO_NUM_GENERATIONS:-8}"
+GRPO_MAX_COMPLETION_LENGTH="${GRPO_MAX_COMPLETION_LENGTH:-768}"
 
 case "$STAGE" in
   sft|grpo|all) ;;
@@ -28,6 +35,10 @@ fi
 SFT_SUMMARY="${SFT_DATA_PATH%.jsonl}_summary.json"
 if [[ -f "$SFT_SUMMARY" ]]; then
   cp "$SFT_SUMMARY" "$ROOT/rejection_sft_summary.json"
+fi
+DATASET_SUMMARY="${DATASET_SUMMARY_PATH:-$(dirname "$SFT_DATA_PATH")/summary.json}"
+if [[ -f "$DATASET_SUMMARY" ]]; then
+  cp "$DATASET_SUMMARY" "$ROOT/training_dataset_summary.json"
 fi
 
 run_sft() {
@@ -54,6 +65,9 @@ run_sft() {
     --checkpoint-dir "$ROOT/sft/checkpoints" \
     --run-root "$ROOT" \
     --run-name sft \
+    --num-train-epochs "$SFT_NUM_TRAIN_EPOCHS" \
+    --learning-rate "$SFT_LEARNING_RATE" \
+    --max-seq-length "$SFT_MAX_SEQ_LENGTH" \
     "${resume_args[@]}"
 }
 
@@ -86,6 +100,10 @@ run_grpo() {
     --checkpoint-dir "$ROOT/grpo/checkpoints" \
     --run-root "$ROOT" \
     --run-name grpo \
+    --num-train-epochs "$GRPO_NUM_TRAIN_EPOCHS" \
+    --learning-rate "$GRPO_LEARNING_RATE" \
+    --num-generations "$GRPO_NUM_GENERATIONS" \
+    --max-completion-length "$GRPO_MAX_COMPLETION_LENGTH" \
     "${resume_args[@]}"
 }
 

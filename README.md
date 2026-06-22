@@ -129,6 +129,69 @@ gradient_checkpointing=False
 optim=adamw_torch
 ```
 
+## v4：多解 SFT + 不可解训练
+
+在 v3 已经稳定掌握格式后，可生成覆盖全部可解训练题、每题最多 3 个确定性正确表达式，并加入与不可解测试集严格隔离的 300 道不可解训练题：
+
+```bash
+python data/prepare_v4_training_data.py \
+  --train-path data/train.jsonl \
+  --solvable-test-path data/test_all_nonoverlap.jsonl \
+  --unsolvable-test-path data/unsolvable_test.jsonl \
+  --output-dir outputs/datasets/v4_multi_solution_unsolvable \
+  --max-solutions 3 \
+  --unsolvable-train-size 300 \
+  --seed 20260622
+```
+
+输出：
+
+```text
+outputs/datasets/v4_multi_solution_unsolvable/
+├── sft_train.jsonl
+├── grpo_train.jsonl
+├── summary.json
+└── sha256.txt
+```
+
+生成器会自动验证：
+
+- 所有可解 SFT 表达式都通过 `judge_answer()`；
+- 可解训练题与 hard/low 测试题零重叠；
+- 不可解训练题与 `unsolvable_test.jsonl` 零重叠；
+- SFT 使用短算式轨迹和 conversational completion；
+- GRPO 每道题只保留一行，包含可解与不可解题。
+
+运行 v4 SFT：
+
+```bash
+export MODEL_NAME=/root/autodl-tmp/models/Qwen2.5-1.5B-Instruct
+export SFT_DATA_PATH=outputs/datasets/v4_multi_solution_unsolvable/sft_train.jsonl
+export TRAIN_DATA_PATH=outputs/datasets/v4_multi_solution_unsolvable/grpo_train.jsonl
+export SFT_NUM_TRAIN_EPOCHS=2
+export SFT_LEARNING_RATE=2e-5
+export SFT_MAX_SEQ_LENGTH=512
+
+bash scripts/run_sft_grpo.sh v4_multi_solution_unsolvable sft
+```
+
+评估 v4 SFT 后，再运行 GRPO：
+
+```bash
+export GRPO_NUM_TRAIN_EPOCHS=4
+export GRPO_LEARNING_RATE=3e-6
+export GRPO_NUM_GENERATIONS=8
+export GRPO_MAX_COMPLETION_LENGTH=512
+
+bash scripts/run_sft_grpo.sh v4_multi_solution_unsolvable grpo
+```
+
+上述环境变量会被写入对应的 `sft_config.json` 和 `config.json`，结果统一保存在：
+
+```text
+outputs/experiments/v4_multi_solution_unsolvable/
+```
+
 低显存 SFT 回退：
 
 ```bash
