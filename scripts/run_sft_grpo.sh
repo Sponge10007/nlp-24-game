@@ -37,7 +37,13 @@ SFT_SUMMARY="${SFT_DATA_PATH%.jsonl}_summary.json"
 if [[ -f "$SFT_SUMMARY" ]]; then
   cp "$SFT_SUMMARY" "$ROOT/rejection_sft_summary.json"
 fi
-DATASET_SUMMARY="${DATASET_SUMMARY_PATH:-$(dirname "$SFT_DATA_PATH")/summary.json}"
+if [[ -n "${DATASET_SUMMARY_PATH:-}" ]]; then
+  DATASET_SUMMARY="$DATASET_SUMMARY_PATH"
+elif [[ "$STAGE" == "grpo" ]]; then
+  DATASET_SUMMARY="$(dirname "$TRAIN_DATA_PATH")/summary.json"
+else
+  DATASET_SUMMARY="$(dirname "$SFT_DATA_PATH")/summary.json"
+fi
 if [[ -f "$DATASET_SUMMARY" ]]; then
   cp "$DATASET_SUMMARY" "$ROOT/training_dataset_summary.json"
 fi

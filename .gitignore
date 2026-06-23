@@ -14,6 +14,11 @@ train_log.txt
 training_metrics.csv
 *.png
 
+# 允许提交报告中的轻量结果和曲线
+!reports/
+!reports/results/
+!reports/results/**/*.png
+
 # VS Code 配置
 .vscode/
 

@@ -2,6 +2,8 @@
 
 本项目使用 `Qwen/Qwen2.5-1.5B-Instruct` 作为基座模型，通过 DeepSeek API 拒绝采样生成 SFT 预热数据，再用 TRL `GRPOTrainer` 做可验证奖励强化学习（RLVR）。任务仍是 24 点：给定 4 个 1-13 的整数，输出一个只使用这些数字一次、由 `+ - * / ( )` 组成且结果等于 24 的表达式；不可解样本要求输出 `UNSOLVABLE`。
 
+完整实验过程、消融结果和最终结论见 [`EXPERIMENT_LOG.md`](EXPERIMENT_LOG.md)。
+
 模型按 R1 风格回答：
 
 ```text
