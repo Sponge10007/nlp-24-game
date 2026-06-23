@@ -1,0 +1,66 @@
+[
+  {
+    "dataset": "data/test_hard_900_1000.jsonl",
+    "total": 100,
+    "solvable_total": 100,
+    "unsolvable_total": 0,
+    "pass_k": 1,
+    "first_success": 0,
+    "pass_success": 0,
+    "first_success_rate": 0.0,
+    "pass_success_rate": 0.0,
+    "first_format_rate": 1.0,
+    "first_code_counts": {
+      "missing_answer": 99,
+      "illegal_character": 1
+    },
+    "pass_code_counts": {
+      "missing_answer": 99,
+      "illegal_character": 1
+    },
+    "correct_count": 0,
+    "honest_unsolvable_count": 0
+  },
+  {
+    "dataset": "data/test_low_solved_rate.jsonl",
+    "total": 100,
+    "solvable_total": 100,
+    "unsolvable_total": 0,
+    "pass_k": 1,
+    "first_success": 0,
+    "pass_success": 0,
+    "first_success_rate": 0.0,
+    "pass_success_rate": 0.0,
+    "first_format_rate": 0.0,
+    "first_code_counts": {
+      "missing_answer": 100
+    },
+    "pass_code_counts": {
+      "missing_answer": 100
+    },
+    "correct_count": 0,
+    "honest_unsolvable_count": 0
+  },
+  {
+    "dataset": "data/unsolvable_test.jsonl",
+    "total": 100,
+    "solvable_total": 0,
+    "unsolvable_total": 100,
+    "pass_k": 1,
+    "first_success": 0,
+    "pass_success": 0,
+    "first_success_rate": 0.0,
+    "pass_success_rate": 0.0,
+    "first_format_rate": 7.000000000000001,
+    "first_code_counts": {
+      "fabricated_unsolvable": 7,
+      "missing_answer": 93
+    },
+    "pass_code_counts": {
+      "fabricated_unsolvable": 7,
+      "missing_answer": 93
+    },
+    "correct_count": 0,
+    "honest_unsolvable_count": 0
+  }
+]

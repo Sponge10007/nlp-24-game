@@ -1,0 +1,61 @@
+COPY  outputs/experiments/v0_base/eval/summary.json -> reports/results/v0_base/eval_summary.json
+SKIP  outputs/experiments/v1_grpo_only/sft/sft_config.json
+SKIP  outputs/experiments/v1_grpo_only/sft/eval/summary.json
+COPY  outputs/experiments/v1_grpo_only/grpo/config.json -> reports/results/v1_grpo_only/grpo/config.json
+SKIP  outputs/experiments/v1_grpo_only/grpo/eval/summary.json
+SKIP  outputs/experiments/v1_grpo_only/grpo/eval_pass4/summary.json
+COPY  outputs/experiments/v1_grpo_only/grpo/accuracy_curve.png -> reports/results/v1_grpo_only/grpo/accuracy_curve.png
+SKIP  outputs/experiments/v1_grpo_only/training_dataset_summary.json
+SKIP  outputs/experiments/v1_grpo_only/dataset_summary.json
+SKIP  outputs/experiments/v2_deepseek500_sft_grpo/sft/sft_config.json
+SKIP  outputs/experiments/v2_deepseek500_sft_grpo/sft/eval/summary.json
+SKIP  outputs/experiments/v2_deepseek500_sft_grpo/grpo/config.json
+SKIP  outputs/experiments/v2_deepseek500_sft_grpo/grpo/eval/summary.json
+SKIP  outputs/experiments/v2_deepseek500_sft_grpo/grpo/eval_pass4/summary.json
+SKIP  outputs/experiments/v2_deepseek500_sft_grpo/grpo/accuracy_curve.png
+SKIP  outputs/experiments/v2_deepseek500_sft_grpo/training_dataset_summary.json
+SKIP  outputs/experiments/v2_deepseek500_sft_grpo/dataset_summary.json
+COPY  outputs/experiments/v3_compact_sft_grpo/sft/sft_config.json -> reports/results/v3_compact_sft_grpo/sft/sft_config.json
+COPY  outputs/experiments/v3_compact_sft_grpo/sft/eval/summary.json -> reports/results/v3_compact_sft_grpo/sft/eval_summary.json
+COPY  outputs/experiments/v3_compact_sft_grpo/grpo/config.json -> reports/results/v3_compact_sft_grpo/grpo/config.json
+COPY  outputs/experiments/v3_compact_sft_grpo/grpo/eval/summary.json -> reports/results/v3_compact_sft_grpo/grpo/eval_summary.json
+COPY  outputs/experiments/v3_compact_sft_grpo/grpo/eval_pass4/summary.json -> reports/results/v3_compact_sft_grpo/grpo/eval_pass4_summary.json
+COPY  outputs/experiments/v3_compact_sft_grpo/grpo/accuracy_curve.png -> reports/results/v3_compact_sft_grpo/grpo/accuracy_curve.png
+SKIP  outputs/experiments/v3_compact_sft_grpo/training_dataset_summary.json
+COPY  outputs/experiments/v3_compact_sft_grpo/dataset_summary.json -> reports/results/v3_compact_sft_grpo/base_dataset_summary.json
+COPY  outputs/experiments/v4_multi_solution_unsolvable/sft/sft_config.json -> reports/results/v4_multi_solution_unsolvable/sft/sft_config.json
+COPY  outputs/experiments/v4_multi_solution_unsolvable/sft/eval/summary.json -> reports/results/v4_multi_solution_unsolvable/sft/eval_summary.json
+COPY  outputs/experiments/v4_multi_solution_unsolvable/grpo/config.json -> reports/results/v4_multi_solution_unsolvable/grpo/config.json
+SKIP  outputs/experiments/v4_multi_solution_unsolvable/grpo/eval/summary.json
+SKIP  outputs/experiments/v4_multi_solution_unsolvable/grpo/eval_pass4/summary.json
+SKIP  outputs/experiments/v4_multi_solution_unsolvable/grpo/accuracy_curve.png
+COPY  outputs/experiments/v4_multi_solution_unsolvable/training_dataset_summary.json -> reports/results/v4_multi_solution_unsolvable/training_dataset_summary.json
+COPY  outputs/experiments/v4_multi_solution_unsolvable/dataset_summary.json -> reports/results/v4_multi_solution_unsolvable/base_dataset_summary.json
+COPY  outputs/experiments/v4_1_canonical_solution/sft/sft_config.json -> reports/results/v4_1_canonical_solution/sft/sft_config.json
+COPY  outputs/experiments/v4_1_canonical_solution/sft/eval/summary.json -> reports/results/v4_1_canonical_solution/sft/eval_summary.json
+SKIP  outputs/experiments/v4_1_canonical_solution/grpo/config.json
+SKIP  outputs/experiments/v4_1_canonical_solution/grpo/eval/summary.json
+SKIP  outputs/experiments/v4_1_canonical_solution/grpo/eval_pass4/summary.json
+SKIP  outputs/experiments/v4_1_canonical_solution/grpo/accuracy_curve.png
+COPY  outputs/experiments/v4_1_canonical_solution/training_dataset_summary.json -> reports/results/v4_1_canonical_solution/training_dataset_summary.json
+COPY  outputs/experiments/v4_1_canonical_solution/dataset_summary.json -> reports/results/v4_1_canonical_solution/base_dataset_summary.json
+SKIP  outputs/experiments/v5_continue_grpo_mixed100/sft/sft_config.json
+SKIP  outputs/experiments/v5_continue_grpo_mixed100/sft/eval/summary.json
+COPY  outputs/experiments/v5_continue_grpo_mixed100/grpo/config.json -> reports/results/v5_continue_grpo_mixed100/grpo/config.json
+COPY  outputs/experiments/v5_continue_grpo_mixed100/grpo/eval/summary.json -> reports/results/v5_continue_grpo_mixed100/grpo/eval_summary.json
+COPY  outputs/experiments/v5_continue_grpo_mixed100/grpo/eval_pass4/summary.json -> reports/results/v5_continue_grpo_mixed100/grpo/eval_pass4_summary.json
+COPY  outputs/experiments/v5_continue_grpo_mixed100/grpo/accuracy_curve.png -> reports/results/v5_continue_grpo_mixed100/grpo/accuracy_curve.png
+COPY  outputs/experiments/v5_continue_grpo_mixed100/training_dataset_summary.json -> reports/results/v5_continue_grpo_mixed100/training_dataset_summary.json
+COPY  outputs/experiments/v5_continue_grpo_mixed100/dataset_summary.json -> reports/results/v5_continue_grpo_mixed100/base_dataset_summary.json
+COPY  outputs/datasets/deepseek500_v1/train_summary.json -> reports/results/datasets/deepseek500_v1_summary.json
+COPY  outputs/datasets/deepseek500_compact_v2/train_summary.json -> reports/results/datasets/deepseek500_compact_v2_summary.json
+COPY  outputs/datasets/v4_multi_solution_unsolvable/summary.json -> reports/results/datasets/v4_summary.json
+COPY  outputs/datasets/v4_multi_solution_unsolvable/sha256.txt -> reports/results/datasets/v4_sha256.txt
+COPY  outputs/datasets/v4_1_canonical_solution/summary.json -> reports/results/datasets/v4_1_summary.json
+COPY  outputs/datasets/v4_1_canonical_solution/sha256.txt -> reports/results/datasets/v4_1_sha256.txt
+COPY  outputs/datasets/v5_continue_grpo_mixed100/summary.json -> reports/results/datasets/v5_summary.json
+COPY  outputs/datasets/v5_continue_grpo_mixed100/sha256.txt -> reports/results/datasets/v5_sha256.txt
+
+Archived at: 2026-06-23T18:50:26+08:00
+Git commit: 2959a4917b69687e65759594d2e9bb9e5bf59f17
+Git branch: 24GB!

@@ -1,0 +1,70 @@
+[
+  {
+    "dataset": "data/test_hard_900_1000.jsonl",
+    "total": 100,
+    "solvable_total": 100,
+    "unsolvable_total": 0,
+    "pass_k": 4,
+    "first_success": 9,
+    "pass_success": 16,
+    "first_success_rate": 9.0,
+    "pass_success_rate": 16.0,
+    "first_format_rate": 100.0,
+    "first_code_counts": {
+      "wrong_value": 91,
+      "correct": 9
+    },
+    "pass_code_counts": {
+      "correct": 16,
+      "wrong_value": 84
+    },
+    "correct_count": 16,
+    "honest_unsolvable_count": 0
+  },
+  {
+    "dataset": "data/test_low_solved_rate.jsonl",
+    "total": 100,
+    "solvable_total": 100,
+    "unsolvable_total": 0,
+    "pass_k": 4,
+    "first_success": 1,
+    "pass_success": 5,
+    "first_success_rate": 1.0,
+    "pass_success_rate": 5.0,
+    "first_format_rate": 100.0,
+    "first_code_counts": {
+      "wrong_value": 97,
+      "illegal_character": 1,
+      "number_mismatch": 1,
+      "correct": 1
+    },
+    "pass_code_counts": {
+      "wrong_value": 93,
+      "illegal_character": 1,
+      "number_mismatch": 1,
+      "correct": 5
+    },
+    "correct_count": 5,
+    "honest_unsolvable_count": 0
+  },
+  {
+    "dataset": "data/unsolvable_test.jsonl",
+    "total": 100,
+    "solvable_total": 0,
+    "unsolvable_total": 100,
+    "pass_k": 4,
+    "first_success": 0,
+    "pass_success": 0,
+    "first_success_rate": 0.0,
+    "pass_success_rate": 0.0,
+    "first_format_rate": 100.0,
+    "first_code_counts": {
+      "fabricated_unsolvable": 100
+    },
+    "pass_code_counts": {
+      "fabricated_unsolvable": 100
+    },
+    "correct_count": 0,
+    "honest_unsolvable_count": 0
+  }
+]

@@ -1,0 +1,23 @@
+{
+  "version": "v4_1_canonical_solution",
+  "seed": 20260622,
+  "source_train_path": "data/train.jsonl",
+  "teacher_sft_path": "outputs/datasets/deepseek500_compact_v2/train.jsonl",
+  "solvable_test_path": "data/test_all_nonoverlap.jsonl",
+  "unsolvable_test_path": "data/unsolvable_test.jsonl",
+  "search_candidates_per_missing_puzzle": 16,
+  "solvable_train_puzzles": 1162,
+  "unique_solvable_sft_puzzles": 1162,
+  "teacher_solution_rows": 500,
+  "deterministic_solution_rows": 662,
+  "missing_solution_rows": 0,
+  "unsolvable_candidates_after_test_exclusion": 358,
+  "unsolvable_sft_puzzles": 150,
+  "unsolvable_grpo_puzzles": 300,
+  "solvable_test_overlap": 0,
+  "unsolvable_test_overlap": 0,
+  "sft_rows": 1312,
+  "grpo_rows": 1462,
+  "sft_path": "outputs/datasets/v4_1_canonical_solution/sft_train.jsonl",
+  "grpo_path": "outputs/datasets/v4_1_canonical_solution/grpo_train.jsonl"
+}

@@ -1,0 +1,8 @@
+{
+  "input": "outputs/datasets/deepseek500_v1/train.jsonl",
+  "output": "outputs/datasets/deepseek500_compact_v2/train.jsonl",
+  "source_rows": 500,
+  "written_rows": 500,
+  "skipped_rows": 0,
+  "think_style": "arithmetic_trace_only"
+}

@@ -1,0 +1,22 @@
+{
+  "version": "v4_multi_solution_unsolvable",
+  "seed": 20260622,
+  "source_train_path": "data/train.jsonl",
+  "solvable_test_path": "data/test_all_nonoverlap.jsonl",
+  "unsolvable_test_path": "data/unsolvable_test.jsonl",
+  "max_solutions_per_puzzle": 3,
+  "solvable_puzzles": 1162,
+  "solvable_puzzles_with_solution": 1162,
+  "solvable_sft_rows": 3238,
+  "missing_solution_count": 0,
+  "min_solutions_per_solvable_puzzle": 1,
+  "max_exported_solutions_per_puzzle": 3,
+  "unsolvable_candidates_after_test_exclusion": 358,
+  "unsolvable_train_puzzles": 300,
+  "solvable_test_overlap": 0,
+  "unsolvable_test_overlap": 0,
+  "sft_rows": 3538,
+  "grpo_rows": 1462,
+  "sft_path": "outputs/datasets/v4_multi_solution_unsolvable/sft_train.jsonl",
+  "grpo_path": "outputs/datasets/v4_multi_solution_unsolvable/grpo_train.jsonl"
+}

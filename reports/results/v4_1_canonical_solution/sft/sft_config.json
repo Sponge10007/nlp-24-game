@@ -1,0 +1,22 @@
+{
+  "model_name": "/root/autodl-tmp/models/Qwen2.5-1.5B-Instruct",
+  "train_data_path": "outputs/datasets/v4_1_canonical_solution/sft_train.jsonl",
+  "output_dir": "outputs/experiments/v4_1_canonical_solution/sft/adapter",
+  "checkpoint_dir": "outputs/experiments/v4_1_canonical_solution/sft/checkpoints",
+  "run_name": "sft",
+  "run_root": "outputs/experiments/v4_1_canonical_solution",
+  "num_train_epochs": 1,
+  "learning_rate": 1e-05,
+  "per_device_batch_size": 2,
+  "grad_accum_steps": 4,
+  "logging_steps": 10,
+  "max_seq_length": 512,
+  "lora_rank": 32,
+  "lora_alpha": 64,
+  "bf16": true,
+  "load_in_4bit": false,
+  "gradient_checkpointing": false,
+  "optim": "adamw_torch",
+  "resume_from_checkpoint": "",
+  "seed": 42
+}

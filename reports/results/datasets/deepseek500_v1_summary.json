@@ -1,0 +1,17 @@
+{
+  "input": "data/train.jsonl",
+  "output": "outputs/datasets/deepseek500_v1/train.jsonl",
+  "total_cases": 500,
+  "existing_rows": 19,
+  "requested_cases": 481,
+  "new_rows": 481,
+  "written_rows": 500,
+  "attempts_per_case": 16,
+  "max_workers": 8,
+  "api_model": "deepseek-reasoner",
+  "counts": {
+    "accepted": 481,
+    "deepseek_api": 481,
+    "correct": 481
+  }
+}

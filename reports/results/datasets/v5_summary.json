@@ -1,0 +1,14 @@
+{
+  "version": "v5_continue_grpo_mixed100",
+  "seed": 20260623,
+  "source_train_path": "data/train.jsonl",
+  "solvable_test_path": "data/test_all_nonoverlap.jsonl",
+  "unsolvable_test_path": "data/unsolvable_test.jsonl",
+  "solvable_train_puzzles": 1162,
+  "unsolvable_candidates_after_test_exclusion": 358,
+  "unsolvable_train_puzzles": 100,
+  "solvable_test_overlap": 0,
+  "unsolvable_test_overlap": 0,
+  "grpo_rows": 1262,
+  "grpo_path": "outputs/datasets/v5_continue_grpo_mixed100/grpo_train.jsonl"
+}
